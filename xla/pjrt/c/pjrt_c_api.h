@@ -25,7 +25,7 @@ limitations under the License.
 
 #define PJRT_DEFINE_STRUCT_TRAITS(sname, last_field) \
   typedef struct sname sname;                        \
-  const size_t sname##_STRUCT_SIZE = PJRT_STRUCT_SIZE(sname, last_field);
+  static const size_t sname##_STRUCT_SIZE = PJRT_STRUCT_SIZE(sname, last_field);
 
 #ifdef __cplusplus
 extern "C" {
