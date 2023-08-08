@@ -27,11 +27,9 @@ limitations under the License.
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/python/pjrt_ifrt/pjrt_executable.h"
 #include "xla/python/py_array.h"
-#include "xla/python/py_buffer.h"
 #include "xla/python/py_client.h"
 #include "xla/python/traceback.h"
 #include "xla/statusor.h"
-#include "xla/types.h"
 
 namespace xla {
 
@@ -139,6 +137,13 @@ class PyLoadedExecutable
     return ifrt_loaded_executable_->GetCompiledMemoryStats();
   }
 
+  StatusOr<absl::flat_hash_map<
+      std::string,
+      std::variant<std::string, int64_t, std::vector<int64_t>, float>>>
+  GetCostAnalysis() const {
+    return ifrt_loaded_executable_->GetCostAnalysis();
+  }
+
   void Delete() {
     // TODO(hyeontaek): Return Status.
     TF_CHECK_OK(ifrt_loaded_executable_->Delete().Await());
@@ -161,6 +166,9 @@ class PyLoadedExecutable
                                             bool with_tokens);
 
   StatusOr<std::vector<std::shared_ptr<HloModule>>> HloModules() const;
+
+  StatusOr<std::vector<std::vector<absl::string_view>>> GetOutputMemoryKinds()
+      const;
 
   std::optional<std::vector<OpSharding>> GetParameterShardings() const;
 

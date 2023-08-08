@@ -22,6 +22,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/strings/string_view.h"
 #include "llvm/Support/ExtensibleRTTI.h"
 #include "xla/client/xla_computation.h"
 #include "xla/pjrt/pjrt_client.h"
@@ -120,6 +121,11 @@ class PjRtExecutable final
     return pjrt_executable_->GetHloModules();
   }
 
+  StatusOr<absl::flat_hash_map<std::string, Executable::CostAnalysisValue>>
+  GetCostAnalysis() const override {
+    return pjrt_executable_->GetCostAnalysis();
+  }
+
   static char ID;  // NOLINT
 
  protected:
@@ -156,11 +162,6 @@ class PjRtLoadedExecutable final
   // PjRtLoadedExecutable::GetHloModules() must be implemented.
   static StatusOr<std::unique_ptr<LoadedExecutable>> Create(
       PjRtCompatibleClient* client, mlir::ModuleOp module,
-      xla::CompileOptions compile_options,
-      std::vector<tsl::RCReference<LoadedHostCallback>> loaded_host_callbacks);
-  // TODO(phawkins): remove the XlaComputation overload.
-  static StatusOr<std::unique_ptr<LoadedExecutable>> Create(
-      PjRtCompatibleClient* client, const XlaComputation& computation,
       xla::CompileOptions compile_options,
       std::vector<tsl::RCReference<LoadedHostCallback>> loaded_host_callbacks);
 
@@ -220,6 +221,12 @@ class PjRtLoadedExecutable final
     return pjrt_loaded_executable_->GetHloModules();
   }
 
+  StatusOr<std::vector<std::vector<absl::string_view>>> GetOutputMemoryKinds()
+      const override {
+    DCHECK(this);
+    return pjrt_loaded_executable_->GetOutputMemoryKinds();
+  }
+
   PjRtCompatibleClient* client() const override {
     DCHECK(this);
     return client_;
@@ -244,6 +251,11 @@ class PjRtLoadedExecutable final
     return pjrt_loaded_executable_->addressable_devices();
   }
 
+  StatusOr<absl::flat_hash_map<std::string, Executable::CostAnalysisValue>>
+  GetCostAnalysis() const override {
+    return pjrt_loaded_executable_->GetCostAnalysis();
+  }
+
   static char ID;  // NOLINT
 
  private:
@@ -251,7 +263,8 @@ class PjRtLoadedExecutable final
       PjRtCompatibleClient* client,
       std::shared_ptr<xla::PjRtLoadedExecutable> pjrt_loaded_executable,
       const xla::Shape& result_shape,
-      const xla::HloSharding* result_hlo_sharding,
+      const std::optional<xla::HloSharding>& result_hlo_sharding,
+      const std::optional<std::vector<absl::string_view>>& result_memory_kinds,
       std::vector<tsl::RCReference<LoadedHostCallback>> loaded_host_callbacks);
 
   PjRtLoadedExecutable(

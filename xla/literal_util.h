@@ -226,6 +226,8 @@ class LiteralUtil {
   // recursively converts its elements.
   static Literal ConvertBF16ToF32(const LiteralSlice& bf16_literal);
   static Literal ConvertBF16ToF64(const LiteralSlice& bf16_literal);
+  static Literal ConvertF32ToF8E4M3FNUZ(const LiteralSlice& f32_literal);
+  static Literal ConvertF32ToF8E5M2FNUZ(const LiteralSlice& f32_literal);
   static Literal ConvertF32ToBF16(const LiteralSlice& f32_literal);
   static Literal ConvertF32ToS8(const LiteralSlice& f32_literal);
   static Literal ConvertF32ToF64(const LiteralSlice& f32_literal);
@@ -529,10 +531,10 @@ template <PrimitiveType type, typename E, typename T>
 /* static */ StatusOr<Literal> LiteralUtil::CreateRandomLiteral(
     const Shape& shape, E* engine, T mean, T stddev) {
   using NativeT = primitive_util::NativeTypeOf<type>;
-  std::normal_distribution<NativeT> generator(mean, stddev);
+  std::normal_distribution<double> generator(mean, stddev);
   return CreateLiteralWithGenerator<type, NativeT>(
       shape, [&](absl::Span<const int64_t> /*indexes*/) {
-        return generator(*engine);
+        return static_cast<NativeT>(generator(*engine));
       });
 }
 

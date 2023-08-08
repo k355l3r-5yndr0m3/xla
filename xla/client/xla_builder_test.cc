@@ -22,20 +22,22 @@ limitations under the License.
 #include <string>
 #include <vector>
 
+#include <gtest/gtest.h>
 #include "xla/client/sharding_builder.h"
 #include "xla/client/value_inference.h"
 #include "xla/client/xla_computation.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
+#include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/service/pattern_matcher_gmock.h"
 #include "xla/shape_util.h"
-#include "xla/test.h"
 #include "xla/test_helpers.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/statusor.h"
 
 namespace xla {
 
@@ -504,6 +506,31 @@ TEST_F(XlaBuilderTest, AllToAllTuple) {
                                    .WithPredicate(is_replica_group_pred)));
 }
 
+TEST_F(XlaBuilderTest, AllReduceTuple) {
+  XlaBuilder b(TestName());
+  auto shape0 = ShapeUtil::MakeShape(F32, {});
+  auto shape1 = ShapeUtil::MakeShape(F32, {1, 2});
+  auto p0 = Parameter(&b, 0, shape0, "p0");
+  auto p1 = Parameter(&b, 1, shape1, "p1");
+
+  XlaBuilder bsum(TestName());
+  auto f32Scalar = ShapeUtil::MakeShape(F32, {});
+  Add(Parameter(&bsum, 0, f32Scalar, "x"), Parameter(&bsum, 1, f32Scalar, "y"));
+  TF_ASSERT_OK_AND_ASSIGN(auto sum, bsum.Build());
+
+  AllReduceTuple({p0, p1}, sum);
+  TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(&b));
+  auto root = module->entry_computation()->root_instruction();
+
+  // Check shape and replica groups.
+  auto tuple_shape = ShapeUtil::MakeTupleShape({shape0, shape1});
+
+  // AllToAll is converted into a single all-to-all HloInstruction.
+  EXPECT_THAT(root, GmockMatch(m::Op()
+                                   .WithOpcode(HloOpcode::kAllReduce)
+                                   .WithShapeEqualTo(&tuple_shape)));
+}
+
 TEST_F(XlaBuilderTest, CollectivePermute) {
   XlaBuilder b(TestName());
   auto x = Parameter(&b, 0, ShapeUtil::MakeShape(F32, {5, 7}), "x");
@@ -527,7 +554,7 @@ TEST_F(XlaBuilderTest, GetDimensionSizeConstant) {
   XlaBuilder b(TestName());
   auto x =
       Parameter(&b, 0, ShapeUtil::MakeShape(F32, {5, 7}, {false, true}), "x");
-  // Get dimension size from a contant dimension gives us a constant.
+  // Get dimension size from a constant dimension gives us a constant.
   GetDimensionSize(x, 0);
   TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(&b));
   auto root = module->entry_computation()->root_instruction();
@@ -1279,6 +1306,70 @@ TEST_F(XlaBuilderTest, CheckInputOutputAlias) {
   auto alias_p1 = config.GetAliasedOutput(1, {});
   ASSERT_TRUE(alias_p1.has_value());
   EXPECT_EQ(*alias_p1, ShapeIndex({0}));
+}
+
+TEST_F(XlaBuilderTest, CheckBufferDonor) {
+  XlaBuilder b(TestName());
+  auto p0 = Parameter(&b, 0, ShapeUtil::MakeShape(F32, {8, 4}), "p0");
+  auto p1 = Parameter(&b, 1, ShapeUtil::MakeShape(F32, {8, 4}), "p1");
+  auto add = Add(p0, p1);
+  auto sub = Sub(p0, p1);
+  auto root = Tuple(&b, {add, sub});
+
+  b.AddBufferDonor(0, {});
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(&b, root));
+
+  const HloBufferDonorConfig& config = module->buffer_donor_config();
+  EXPECT_TRUE(config.ParameterIsBufferDonor(0, {}));
+  EXPECT_FALSE(config.ParameterIsBufferDonor(1, {}));
+}
+
+TEST_F(XlaBuilderTest, InvalidInputOutputAliasBufferDonor) {
+  XlaBuilder b(TestName());
+
+  auto p0 = Parameter(&b, 0, ShapeUtil::MakeShape(F32, {8, 4}), "p0");
+  auto p1 = Parameter(&b, 1, ShapeUtil::MakeShape(F32, {8, 4}), "p1");
+  auto add = Add(p0, p1);
+  auto sub = Sub(p0, p1);
+  auto root = Tuple(&b, {add, sub});
+
+  b.SetUpAlias({1}, 0, {});
+  b.AddBufferDonor(0, {});
+
+  auto statusor = BuildHloModule(&b, root);
+  EXPECT_FALSE(statusor.ok());
+  EXPECT_THAT(statusor.status().message(),
+              HasSubstr("is already aliased with one output, thus it cannot be "
+                        "added as a buffer donor for any output."));
+}
+
+TEST_F(XlaBuilderTest, ValidInputOutputAliasBufferDonor) {
+  XlaBuilder b(TestName());
+
+  auto p0 = Parameter(&b, 0, ShapeUtil::MakeShape(F32, {8, 4}), "p0");
+  auto p1 = Parameter(&b, 1, ShapeUtil::MakeShape(F32, {8, 4}), "p1");
+  auto add = Add(p0, p1);
+  auto sub = Sub(p0, p1);
+  auto root = Tuple(&b, {add, sub});
+
+  b.SetUpAlias({1}, 0, {});
+  b.AddBufferDonor(1, {});
+  TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(&b, root));
+
+  const HloInputOutputAliasConfig& io_alias_config =
+      module->input_output_alias_config();
+  const HloBufferDonorConfig& buffer_donor_config =
+      module->buffer_donor_config();
+
+  EXPECT_TRUE(io_alias_config.ParameterHasAlias(0, {}));
+  EXPECT_FALSE(io_alias_config.ParameterHasAlias(1, {}));
+  EXPECT_FALSE(buffer_donor_config.ParameterIsBufferDonor(0, {}));
+  EXPECT_TRUE(buffer_donor_config.ParameterIsBufferDonor(1, {}));
+
+  auto alias_p0 = io_alias_config.GetAliasedOutput(0, {});
+  ASSERT_TRUE(alias_p0.has_value());
+  EXPECT_EQ(*alias_p0, ShapeIndex({1}));
 }
 
 void ExpectAttributesMatch(const FrontendAttributes& attr,

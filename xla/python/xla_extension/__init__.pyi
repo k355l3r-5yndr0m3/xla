@@ -17,7 +17,9 @@ import enum
 import inspect
 import types
 import typing
-from typing import Any, Callable, ClassVar, Dict, List, Optional, Sequence, Tuple, Type, TypeVar, Union, overload
+from typing import (
+    Any, Callable, ClassVar, Dict, List, Optional, Sequence, Tuple, Type,
+    TypeVar, Union, overload)
 
 import numpy as np
 
@@ -53,7 +55,9 @@ class PrimitiveType(enum.IntEnum):
   U64: PrimitiveType
   F8_E4M3FN: PrimitiveType
   F8_E4M3B11FNUZ: PrimitiveType
+  F8_E4M3FNUZ: PrimitiveType
   F8_E5M2: PrimitiveType
+  F8_E5M2FNUZ: PrimitiveType
   BF16: PrimitiveType
   F16: PrimitiveType
   F32: PrimitiveType
@@ -264,6 +268,7 @@ class ExecutableBuildOptions:
   def __init__(self) -> None: ...
   def __repr__(self) -> str: ...
   result_layout: Optional[Shape]
+  fdo_profile: Optional[bytes]
   num_replicas: int
   num_partitions: int
   debug_options: DebugOptions
@@ -292,12 +297,12 @@ class OpSharding:
   last_tile_dims: Sequence[Type]
   tile_assignment_dimensions: Sequence[int]
   tile_assignment_devices: Sequence[int]
+  iota_reshape_dims: Sequence[int]
+  iota_transpose_perm: Sequence[int]
   tuple_shardings: Sequence[OpSharding]
   def ParseFromString(self, s: bytes) -> None: ...
   def SerializeToString(self) -> bytes: ...
   def clone(self) -> OpSharding: ...
-
-def is_op_sharding_fully_replicated(sharding: OpSharding, /) -> bool: ...
 
 class HloSharding:
   @staticmethod
@@ -349,22 +354,31 @@ class Device:
   def __str__(self) -> str: ...
   def transfer_to_infeed(self, literal: _LiteralSlice): ...
   def transfer_from_outfeed(self, shape: Shape): ...
+  def memory(self, kind: str) -> Memory: ...
+  def default_memory(self) -> Memory: ...
+  def addressable_memories(self) -> List[Memory]: ...
   def live_buffers(self) -> List[Any]: ...
+  def memory_stats(self) -> Optional[Dict[str, int]]: ...
   def __getattr__(self, name: str) -> Any: ...
 
-class _GpuAllocatorKind(enum.IntEnum):
-    DEFAULT: int
-    PLATFORM: int
-    BFC: int
-    CUDA_ASYNC: int
+class Memory:
+  process_index: int
+  platform: str
+  kind: str
+  def __repr__(self) -> str: ...
+  def __str__(self) -> str: ...
+  def attached_devices(self) -> List[Device]: ...
 
 class GpuAllocatorConfig:
-  # TODO(b/194673104): Remove once pytype correctly resolves a nested enum.
-  Kind = _GpuAllocatorKind
+  class Kind(enum.IntEnum):
+      DEFAULT: int
+      PLATFORM: int
+      BFC: int
+      CUDA_ASYNC: int
 
   def __init__(
       self,
-      kind: _GpuAllocatorKind = ...,
+      kind: Kind = ...,
       memory_fraction: float = ...,
       preallocate: bool = ...) -> None: ...
 
@@ -426,7 +440,7 @@ class Client:
   def make_python_callback_from_host_send_and_recv(
       self, callable: Callable, operand_shapes: Sequence[Shape],
       result_shapes: Sequence[Shape], send_channel_ids: Sequence[int],
-      recv_channel_ids: Sequence[int]) -> Any: ...
+      recv_channel_ids: Sequence[int], serializer: Optional[Callable] = ...) -> Any: ...
   def get_python_callback_from_host_send(callable: Any,
                                          operand_shapes: Any, send_channel_ids: Any, recv_channel_ids: Any) -> Any: ...
 
@@ -442,7 +456,16 @@ def get_gpu_client(
     platform_name: Optional[str] = ...) -> Client:...
 def get_tpu_client(max_inflight_computations: int = ...) -> Client: ...
 def get_c_api_client(platform_name: str, options: Dict[str, Union[str, int, List[int], float]]) -> Client: ...
-def get_default_c_api_topology(platform_name: str) -> DeviceTopology: ...
+def get_default_c_api_topology(
+    platform_name: str,
+    topology_name: str,
+    options: Dict[str, Union[str, int, List[int], float]],
+) -> DeviceTopology:
+  ...
+def get_topology_for_devices(devices: List[Device]) -> DeviceTopology:
+  ...
+
+
 def load_pjrt_plugin(platform_name: str, library_path: str) -> _Status: ...
 def pjrt_plugin_loaded(plugin_name: str) -> bool: ...
 
@@ -487,6 +510,8 @@ def batched_device_put(
 ) -> ArrayImpl:
   ...
 
+def canonicalize_memory_kind(
+    memory_kind: Optional[str], device: Device) -> Optional[str]: ...
 
 def array_result_handler(
                aval: Any,
@@ -530,14 +555,17 @@ class LoadedExecutable:
       self,
       arguments: Sequence[List[ArrayImpl]], with_tokens: bool = ...) -> ExecuteResults: ...
   def hlo_modules(self) -> List[HloModule]: ...
+  def get_output_memory_kinds(self) -> List[List[str]]: ...
   def get_compiled_memory_stats(self) -> CompiledMemoryStats: ...
   def keep_alive(self) -> None: ...
   def compile_options(self) -> CompileOptions: ...
+  def cost_analysis(self) -> Dict[str, Any]: ...
   traceback: Traceback
   fingerprint: Optional[bytes]
 
 class Executable:
   def hlo_modules(self) -> List[HloModule]: ...
+  def get_output_memory_kinds(self) -> List[List[str]]: ...
   def get_output_shardings(self) -> Optional[List[OpSharding]]: ...
   def get_parameter_shardings(self) -> Optional[List[OpSharding]]: ...
   def get_compiled_memory_stats(self) -> CompiledMemoryStats: ...
@@ -600,7 +628,6 @@ class DistributedRuntimeClient:
 def get_distributed_runtime_service(
     address: str,
     num_nodes: int,
-    use_coordination_service: bool = ...,
     heartbeat_interval: Optional[int] = ...,
     max_missing_heartbeats: Optional[int] = ...,
     enumerate_devices_timeout: Optional[int] = ...,
@@ -608,7 +635,6 @@ def get_distributed_runtime_service(
 def get_distributed_runtime_client(
     address: str,
     node_id: int,
-    use_coordination_service: bool = ...,
     rpc_timeout: Optional[int] = ...,
     init_timeout: Optional[int] = ...,
     shutdown_timeout: Optional[int] = ...,
@@ -649,14 +675,17 @@ class Sharding: ...
 class XLACompatibleSharding(Sharding): ...
 
 class NamedSharding(XLACompatibleSharding):
-  def __init__(self, mesh: Any, spec: Any, _parsed_pspec: Any = None): ...
+  def __init__(self, mesh: Any, spec: Any, *, memory_kind: Optional[str] = None,
+               _parsed_pspec: Any = None): ...
   mesh: Any
   spec: Any
+  _memory_kind: Optional[str]
   _parsed_pspec: Any
 
 class SingleDeviceSharding(XLACompatibleSharding):
-  def __init__(self, device: Device): ...
+  def __init__(self, device: Device, *, memory_kind: Optional[str] = None): ...
   _device: Device
+  _memory_kind: Optional[str]
 
 class PmapSharding(XLACompatibleSharding):
   def __init__(self, devices: Sequence[Any], sharding_spec: pmap_lib.ShardingSpec): ...
@@ -665,9 +694,11 @@ class PmapSharding(XLACompatibleSharding):
 
 class GSPMDSharding(XLACompatibleSharding):
   def __init__(self, devices: Sequence[Device],
-               op_sharding: Union[OpSharding, HloSharding]): ...
+               op_sharding: Union[OpSharding, HloSharding],
+               *, memory_kind: Optional[str] = None): ...
   _devices: Tuple[Device, ...]
-  _op_sharding: Union[OpSharding, HloSharding]
+  _hlo_sharding: HloSharding
+  _memory_kind: Optional[str]
 
 class PjitFunction:
   def __call__(self, *args, **kwargs) -> Any: ...
@@ -685,7 +716,9 @@ class PjitFunctionCache:
 def pjit(function_name: str, fun: Optional[Callable], cache_miss: Callable,
          static_argnums: Sequence[int], static_argnames: Sequence[str],
          donate_argnums: Sequence[int],
-         cache: Optional[PjitFunctionCache] = ...) -> PjitFunction: ...
+         pytree_registry: pytree.PyTreeRegistry,
+         cache: Optional[PjitFunctionCache] = ...,
+         ) -> PjitFunction: ...
 
 class HloPassInterface:
   @property

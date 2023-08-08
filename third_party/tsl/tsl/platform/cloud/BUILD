@@ -82,6 +82,11 @@ cc_library(
     deps = [
         ":http_request",
         "//tsl/platform:env",
+        "//tsl/platform:errors",
+        "//tsl/platform:retrying_utils",
+        "//tsl/platform:status",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
     ],
 )
 
@@ -113,7 +118,6 @@ cc_library(
         ":http_request",
         ":ram_file_block_cache",
         ":time_util",
-        "//tsl/lib/gtl:map_util",
         "//tsl/platform:env",
         "//tsl/platform:errors",
         "//tsl/platform:file_statistics",
@@ -131,6 +135,7 @@ cc_library(
         "//tsl/profiler/lib:traceme",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
         "@jsoncpp_git//:jsoncpp",
     ],
     alwayslink = 1,
@@ -157,7 +162,6 @@ cc_library(
         ":http_request",
         ":ram_file_block_cache",
         ":time_util",
-        "//tsl/lib/gtl:map_util",
         "//tsl/platform:env",
         "//tsl/platform:errors",
         "//tsl/platform:file_statistics",
@@ -175,6 +179,7 @@ cc_library(
         "//tsl/profiler/lib:traceme",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
         "@jsoncpp_git//:jsoncpp",
     ],
     alwayslink = 1,

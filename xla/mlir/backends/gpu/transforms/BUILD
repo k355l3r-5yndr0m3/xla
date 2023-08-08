@@ -1,5 +1,5 @@
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
-load("@tsl//tsl:tsl.default.bzl", "get_compatible_with_cloud")
+load("@tsl//tsl:tsl.default.bzl", "get_compatible_with_portable")
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library")
 
 package(
@@ -10,7 +10,7 @@ package(
 
 gentbl_cc_library(
     name = "passes_inc_gen",
-    compatible_with = get_compatible_with_cloud(),
+    compatible_with = get_compatible_with_portable(),
     tbl_outs = [
         (
             [
@@ -26,6 +26,22 @@ gentbl_cc_library(
 )
 
 cc_library(
+    name = "dataflow_analysis",
+    srcs = ["dataflow_analysis.cc"],
+    hdrs = ["dataflow_analysis.h"],
+    compatible_with = [],
+    deps = [
+        "//xla/mlir_hlo:lhlo",
+        "//xla/mlir_hlo:lhlo_gpu",
+        "@com_google_absl//absl/strings",
+        "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:GPUDialect",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:MemRefDialect",
+    ],
+)
+
+cc_library(
     name = "passes",
     srcs = [
         "add_concurrent_regions.cc",
@@ -37,6 +53,7 @@ cc_library(
         "memref_get_global_to_arg.cc",
         "outline_cuda_graphs.cc",
         "passes.cc",
+        "stream_assignment.cc",
         "uid_generator.h",
     ],
     hdrs = ["passes.h"],
@@ -44,6 +61,7 @@ cc_library(
     # TODO(ezhulenev): Do not depend on NCCL thunks in compiler passes.
     compatible_with = [],
     deps = [
+        ":dataflow_analysis",
         ":passes_inc_gen",
         "//xla:debug_options_flags",
         "//xla:xla_proto_cc",
@@ -71,5 +89,6 @@ cc_library(
         "@llvm-project//mlir:SCFDialect",
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:Transforms",
+        "@tsl//tsl/platform:env",
     ],
 )

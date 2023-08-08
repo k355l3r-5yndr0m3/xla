@@ -1,6 +1,6 @@
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
-load("@tsl//tsl/platform:build_config.bzl", "pyx_library")
+load("@tsl//tsl/platform:build_config.bzl", "pyx_library", "tf_proto_library")
 load(
     "@tsl//tsl/platform/default:cuda_build_defs.bzl",
     "if_cuda_is_configured",
@@ -39,7 +39,10 @@ pytype_library(
     pytype_srcs = ["xla_client.pyi"],
     srcs_version = "PY3",
     visibility = ["//visibility:public"],
-    deps = [":xla_extension"],
+    deps = [
+        ":xla_extension",
+        "@ml_dtypes",
+    ],
 )
 
 exports_files(["xla_client.pyi"])
@@ -189,6 +192,7 @@ cc_library(
     features = ["-use_header_modules"],
     deps = [
         "//xla:status",
+        "@com_google_absl//absl/status",
     ],
 )
 
@@ -212,12 +216,10 @@ cc_library(
         "//xla:statusor",
         "//xla:types",
         "//xla:xla_data_proto_cc",
-        "//xla/pjrt:pjrt_client",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:inlined_vector",
         "@pybind11",
         "@pybind11_abseil//pybind11_abseil:absl_casters",
-        "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:protobuf",
     ],
 )
@@ -342,6 +344,7 @@ cc_library(
     deps = [
         ":exceptions",
         ":pprof_profile_builder",
+        ":py_host_callback_proto_cc",
         ":python_ref_manager",
         ":python_utils",
         ":status_casters",
@@ -366,6 +369,7 @@ cc_library(
         "//xla/pjrt:transpose",
         "//xla/python/ifrt",
         "//xla/python/pjrt_ifrt",
+        "//xla/python/pjrt_ifrt:xla_host_callback_proto_cc",
         "//xla/python/pjrt_ifrt:xla_ifrt",
         "//xla/service:custom_call_status",
         "//xla/service:custom_call_target_registry",
@@ -377,6 +381,7 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@com_google_absl//absl/types:variant",
+        "@com_google_protobuf//:protobuf",
         "@llvm-project//llvm:Support",
         "@pybind11",
         "@pybind11_abseil//pybind11_abseil:absl_casters",
@@ -491,11 +496,10 @@ cc_library(
         ":status_casters",
         "//xla/client:xla_computation",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/utils:hlo_query",
         "//xla/hlo/utils:hlo_sharding_util",
         "//xla/service:custom_call_sharding_helper",
         "//xla/service/spmd:spmd_partitioner",
-        "@com_google_absl//absl/cleanup",
-        "@com_google_absl//absl/synchronization",
         "@pybind11",
     ],
 )
@@ -566,6 +570,7 @@ cc_library(
         ":jax_jit",
         ":py_client",
         ":python_utils",
+        ":pytree",
         ":status_casters",
         ":util",
         "//xla/pjrt:lru_cache",
@@ -593,6 +598,7 @@ cc_library(
         ":jax_jit",
         ":py_client",
         ":python_utils",
+        ":pytree",
         ":status_casters",
         ":types",
         ":util",
@@ -620,7 +626,6 @@ xla_cc_test(
     srcs = ["outfeed_receiver_test.cc"],
     deps = [
         ":outfeed_receiver",
-        "//xla:statusor",
         "//xla:test",
         "//xla/client:client_library",
         "//xla/client:executable_build_options",
@@ -629,9 +634,7 @@ xla_cc_test(
         "//xla/pjrt:pjrt_stream_executor_client",
         "//xla/pjrt:tfrt_cpu_pjrt_client",
         "//xla/service:platform_util",
-        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
-        "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
     ],
 )
@@ -660,6 +663,28 @@ cc_library(
     ],
 )
 
+py_test(
+    name = "pytree_test",
+    srcs = ["pytree_test.py"],
+    python_version = "PY3",
+    srcs_version = "PY3",
+    tags = ["no_oss"],  # TODO(phawkins): This test passes, but requires --config=monolithic.
+    deps = [
+        ":xla_client",
+        ":xla_extension",
+        "@absl_py//absl/flags",
+        "@absl_py//absl/logging",
+        "@absl_py//absl/testing:absltest",
+    ] + xla_py_test_deps(),
+)
+
+tf_proto_library(
+    name = "pytree_proto",
+    srcs = ["pytree.proto"],
+    cc_api_version = 2,
+    visibility = ["//visibility:public"],
+)
+
 cc_library(
     name = "pytree",
     srcs = ["pytree.cc"],
@@ -673,6 +698,7 @@ cc_library(
     visibility = [":friends"],
     deps = [
         ":exceptions",
+        ":pytree_proto_cc",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:inlined_vector",
@@ -708,6 +734,7 @@ cc_library(
         "//xla/translate/hlo_to_mhlo:hlo_to_mlir_hlo",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:FuncExtensions",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Parser",
         "@llvm-project//mlir:Pass",
@@ -726,13 +753,11 @@ cc_library(
     srcs = ["refine_polymorphic_shapes.cc"],
     hdrs = ["refine_polymorphic_shapes.h"],
     deps = [
-        "//xla:status",
         "//xla/mlir/utils:error_util",
-        "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@llvm-project//llvm:Support",
-        "@llvm-project//mlir:BytecodeWriter",
         "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:FuncExtensions",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Parser",
         "@llvm-project//mlir:Pass",
@@ -741,6 +766,7 @@ cc_library(
         "@stablehlo//:chlo_ops",
         "@stablehlo//:stablehlo_ops",
         "@stablehlo//:stablehlo_passes",
+        "@tsl//tsl/platform:errors",
     ],
 )
 
@@ -758,6 +784,7 @@ cc_library(
     deps = [
         ":status_casters",
         ":types",
+        ":xplane_to_profile_instructions",
         "//xla:status",
         "//xla/backends/profiler:profiler_backends",
         "//xla/backends/profiler/cpu:python_tracer",
@@ -766,7 +793,7 @@ cc_library(
         "@tsl//tsl/profiler/lib:profiler_session",
         "@tsl//tsl/profiler/rpc:profiler_server_impl",
         "@tsl//tsl/profiler/rpc/client:capture_profile",
-        "@tsl//tsl/profiler/rpc/client:profiler_client",
+        "@tsl//tsl/profiler/rpc/client:profiler_client_impl",
     ],
 )
 
@@ -868,7 +895,6 @@ cc_library(
         "//xla/service:hlo_pass",
         "//xla/service:hlo_proto_cc",
         "//xla/service:name_uniquer",
-        "//xla/service:platform_util",
         "//xla/service:tuple_simplifier",
         "@com_google_absl//absl/hash",
         "@com_google_absl//absl/strings",
@@ -877,6 +903,12 @@ cc_library(
         "@pybind11",
         "@tsl//tsl/lib/strings:proto_serialization",
     ],
+)
+
+tf_proto_library(
+    name = "py_host_callback_proto",
+    srcs = ["py_host_callback.proto"],
+    cc_api_version = 2,
 )
 
 # TODO(phawkins): the configuration settings here are overly confusing. The right fix is to split
@@ -908,18 +940,6 @@ config_setting(
     name = "tpu_enabled",
     flag_values = {
         ":enable_tpu": "True",
-    },
-)
-
-bool_flag(
-    name = "enable_plugin_device",
-    build_setting_default = False,
-)
-
-config_setting(
-    name = "plugin_device_enabled",
-    flag_values = {
-        ":enable_plugin_device": "True",
     },
 )
 
@@ -958,9 +978,6 @@ tsl_pybind_extension(
         "//conditions:default": [],
     }) + select({
         ":tpu_enabled": ["XLA_PYTHON_ENABLE_TPU=1"],
-        "//conditions:default": [],
-    }) + select({
-        ":plugin_device_enabled": ["XLA_PYTHON_ENABLE_PLUGIN_DEVICE=1"],
         "//conditions:default": [],
     }),
     linkopts = select({
@@ -1030,6 +1047,7 @@ tsl_pybind_extension(
     ] + select({
         ":gpu_enabled": [
             "//xla/pjrt/gpu:se_gpu_pjrt_client",
+            "@tsl//tsl/platform/cloud:gcs_file_system",
         ],
         "//conditions:default": [],
     }) + select({
@@ -1040,13 +1058,53 @@ tsl_pybind_extension(
     }) + select({
         ":tpu_enabled": [
             "//xla/pjrt:tpu_client",
-            "//xla/stream_executor/tpu:tpu_initializer_helper",
-        ],
-        "//conditions:default": [],
-    }) + select({
-        ":plugin_device_enabled": [
-            "//xla/pjrt:pjrt_plugin_device_client",
+            "//xla/stream_executor/tpu:tpu_initializer_framework_helper",
         ],
         "//conditions:default": [],
     }),
+)
+
+cc_library(
+    name = "xplane_to_profile_instructions",
+    srcs = ["xplane_to_profile_instructions.cc"],
+    hdrs = ["xplane_to_profile_instructions.h"],
+    deps = [
+        "//xla:status",
+        "//xla:xla_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_proto_cc",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:optional",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:types",
+        "@tsl//tsl/profiler/convert:xla_op_utils",
+        "@tsl//tsl/profiler/protobuf:profiled_instructions_proto_cc",
+        "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
+        "@tsl//tsl/profiler/utils:file_system_utils",
+        "@tsl//tsl/profiler/utils:tf_xplane_visitor",
+        "@tsl//tsl/profiler/utils:xplane_schema",
+        "@tsl//tsl/profiler/utils:xplane_utils",
+        "@tsl//tsl/profiler/utils:xplane_visitor",
+    ],
+)
+
+xla_cc_test(
+    name = "xplane_to_profile_instructions_test",
+    srcs = ["xplane_to_profile_instructions_test.cc"],
+    deps = [
+        ":xplane_to_profile_instructions",
+        "//xla/service:hlo_proto_cc",
+        "//xla/tests:verified_hlo_module",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
+        "@tsl//tsl/profiler/convert:xla_op_utils",
+        "@tsl//tsl/profiler/protobuf:profiled_instructions_proto_cc_impl",
+        "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
+        "@tsl//tsl/profiler/rpc/client:save_profile",
+        "@tsl//tsl/profiler/utils:file_system_utils",
+        "@tsl//tsl/profiler/utils:xplane_builder",
+        "@tsl//tsl/profiler/utils:xplane_schema",
+    ],
 )

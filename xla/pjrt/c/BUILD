@@ -22,20 +22,6 @@ cc_library(
     ],
 )
 
-# TODO(269360974): remove this target after pjrt_c_api_client no longer needs
-# to access wrapped objects.
-cc_library(
-    name = "pjrt_c_api_wrapper_impl_header",
-    hdrs = ["pjrt_c_api_wrapper_impl.h"],
-    visibility = ["//visibility:public"],
-    deps = [
-        ":pjrt_c_api_hdrs",
-        "//xla/pjrt:pjrt_client",
-        "//xla/pjrt:pjrt_compiler",
-        "//xla/pjrt:pjrt_future",
-    ],
-)
-
 cc_library(
     name = "pjrt_c_api_wrapper_impl",
     srcs = ["pjrt_c_api_wrapper_impl.cc"],
@@ -49,16 +35,33 @@ cc_library(
         "//xla:status",
         "//xla:statusor",
         "//xla:util",
+        "//xla:xla_data_proto_cc",
+        "//xla:xla_proto_cc",
         "//xla/client:xla_computation",
         "//xla/hlo/ir:hlo",
+        "//xla/pjrt:compile_options_proto_cc",
         "//xla/pjrt:mlir_to_hlo",
         "//xla/pjrt:pjrt_client",
+        "//xla/pjrt:pjrt_common",
         "//xla/pjrt:pjrt_compiler",
+        "//xla/pjrt:pjrt_device_description",
         "//xla/pjrt:pjrt_executable",
         "//xla/pjrt:pjrt_future",
+        "//xla/service:computation_placer_hdr",
         "//xla/service:hlo_proto_cc",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/time",
+        "@com_google_absl//absl/types:span",
+        "@llvm-project//mlir:IR",
+        "@tsl//tsl/framework:allocator",
         "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -76,6 +79,8 @@ cc_library(
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:pjrt_future",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
     ],
 )
 
@@ -96,12 +101,14 @@ cc_library(
     name = "pjrt_c_api_gpu_internal",
     srcs = ["pjrt_c_api_gpu_internal.cc"],
     hdrs = ["pjrt_c_api_gpu_internal.h"],
+    visibility = ["//visibility:public"],
     deps = [
         ":pjrt_c_api_hdrs",
         ":pjrt_c_api_helpers",
         ":pjrt_c_api_wrapper_impl",
         "//xla/pjrt/gpu:gpu_helpers",
         "//xla/pjrt/gpu:se_gpu_pjrt_client",
+        "@com_google_absl//absl/time",
     ],
 )
 
@@ -115,6 +122,20 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "pjrt_c_api_test_base",
+    testonly = 1,
+    srcs = ["pjrt_c_api_test_base.cc"],
+    hdrs = ["pjrt_c_api_test_base.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":pjrt_c_api_hdrs",
+        ":pjrt_c_api_wrapper_impl",
+        "//xla/pjrt:pjrt_client",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
 xla_cc_test(
     name = "pjrt_c_api_gpu_test",
     srcs = ["pjrt_c_api_gpu_test.cc"],
@@ -122,9 +143,13 @@ xla_cc_test(
     deps = [
         ":pjrt_c_api_gpu",
         ":pjrt_c_api_hdrs",
+        ":pjrt_c_api_helpers",
+        ":pjrt_c_api_test_base",
+        ":pjrt_c_api_test_common",
         ":pjrt_c_api_wrapper_impl",
         "//xla/pjrt:pjrt_client",
         "//xla/service:gpu_plugin",
+        "@com_google_absl//absl/time",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -133,8 +158,11 @@ xla_cc_test(
     name = "pjrt_c_api_helpers_test",
     srcs = ["pjrt_c_api_helpers_test.cc"],
     deps = [
+        ":pjrt_c_api_hdrs",
         ":pjrt_c_api_helpers",
-        "//xla/pjrt:pjrt_client",
+        ":pjrt_c_api_wrapper_impl",
+        "//xla:shape_util",
+        "@com_google_absl//absl/time",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:status",
@@ -146,9 +174,39 @@ xla_cc_test(
     srcs = ["pjrt_c_api_cpu_test.cc"],
     deps = [
         ":pjrt_c_api_cpu",
-        ":pjrt_c_api_hdrs",
+        ":pjrt_c_api_test_common",
         ":pjrt_c_api_wrapper_impl",
-        "//xla/pjrt:pjrt_client",
         "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
+    name = "pjrt_c_api_test_common",
+    testonly = 1,
+    srcs = ["pjrt_c_api_test.cc"],
+    hdrs = ["pjrt_c_api_test.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":pjrt_c_api_hdrs",
+        ":pjrt_c_api_helpers",
+        ":pjrt_c_api_test_base",
+        "//xla:literal_util",
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
+        "//xla:xla_proto_cc",
+        "//xla/client:xla_builder",
+        "//xla/client:xla_computation",
+        "//xla/pjrt:pjrt_client",
+        "//xla/pjrt:pjrt_future",
+        "//xla/service:hlo_parser",
+        "//xla/service:hlo_proto_cc",
+        "//xla/tests:literal_test_util",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
     ],
 )

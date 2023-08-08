@@ -46,11 +46,14 @@ TAGS_FILTER="-no_oss,-oss_excluded,-oss_serial"
 ADDITIONAL_FLAGS=""
 
 if is_linux_gpu_job ; then
-    TAGS_FILTER="$TAGS_FILTER,gpu,requires-gpu,-no_gpu"
+    TAGS_FILTER="$TAGS_FILTER,gpu,requires-gpu-nvidia,-no_gpu"
     ADDITIONAL_FLAGS="$ADDITIONAL_FLAGS --run_under=//tools/ci_build/gpu_build:parallel_gpu_execute"
     RC_FILE="/usertools/gpu.bazelrc"
+    echo "***NOTE: nvidia-smi lists the highest CUDA version the driver supports, which may be different than the version of CUDA actually used!!***"
+    nvidia-smi
 else
-    TAGS_FILTER="$TAGS_FILTER,-gpu,-requires-gpu"
+    TAGS_FILTER="$TAGS_FILTER,-gpu,-requires-gpu-nvidia"
+    ADDITIONAL_FLAGS="$ADDITIONAL_FLAGS --config=nonccl"
 fi
 
 # Build & test XLA
@@ -61,28 +64,16 @@ docker exec xla bazel --bazelrc=$RC_FILE \
         --keep_going \
         --features=layering_check \
         --profile=/tf/pkg/profile.json.gz \
-        --config=nonccl \
         --flaky_test_attempts=3 \
         --config=rbe \
         --jobs=150 \
+        --nobuild_tests_only \
         $ADDITIONAL_FLAGS \
         -- //xla/... //build_tools/... $TARGET_FILTER
 
 # Print build time statistics, including critical path.
 docker exec xla bazel analyze-profile "/tf/pkg/profile.json.gz"
 
-docker exec xla bazel --bazelrc=$RC_FILE \
-        build \
-        --build_tag_filters=$TAGS_FILTER  \
-        --keep_going \
-        --profile=/tf/pkg/profile.json.gz \
-        --config=nonccl \
-        --config=rbe \
-        --jobs=150 \
-        $ADDITIONAL_FLAGS \
-        -- //xla/... //build_tools/... $TARGET_FILTER
-
-docker exec xla bazel analyze-profile "/tf/pkg/profile.json.gz"
 # Stop container
 docker stop xla
 

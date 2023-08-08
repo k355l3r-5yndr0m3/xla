@@ -30,6 +30,7 @@ limitations under the License.
 #include "xla/literal.h"
 #include "xla/pjrt/gpu/se_gpu_pjrt_client.h"
 #include "xla/pjrt/pjrt_client.h"
+#include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/primitive_util.h"
 #include "xla/service/hlo_parser.h"
@@ -37,7 +38,6 @@ limitations under the License.
 #include "xla/tests/test_utils.h"
 #include "xla/tools/hlo_control_flow_flattening.h"
 #include "tsl/platform/errors.h"
-#include "tsl/platform/logging.h"
 #include "tsl/platform/statusor.h"
 
 namespace xla {
@@ -236,8 +236,7 @@ void AddShardingAnnotationsToSpmdPartitionedModule(HloModule* hlo_module) {
 
 StatusOr<std::unique_ptr<PjRtClient>> FunctionalHloRunner::CreateGpuClient() {
   return GetStreamExecutorGpuClient(
-      /*asynchronous=*/true, GpuAllocatorConfig(),
-      /*distributed_client=*/nullptr, /*node_id=*/0);
+      /*asynchronous=*/true, GpuAllocatorConfig(), /*node_id=*/0);
 }
 
 StatusOr<ExecutionOptions> FunctionalHloRunner::LoadExecutionOptions(
@@ -748,6 +747,24 @@ StatusOr<std::unique_ptr<PjRtLoadedExecutable>> FunctionalHloRunner::Compile(
   return executable;
 }
 
+StatusOr<std::unique_ptr<PjRtExecutable>> FunctionalHloRunner::Compile(
+    PjRtClient& client, HloModule* hlo_module,
+    const PreprocessingOptions& preproc_options,
+    const CompileOptions& compile_options,
+    const PjRtTopologyDescription& topology) {
+  TF_RETURN_IF_ERROR(
+      PrepareHloModuleForCompilation(hlo_module, preproc_options));
+  CompileOptions modified_compile_options =
+      CompleteCompileOptions(*hlo_module, compile_options);
+  XlaComputation computation(hlo_module->ToProto());
+  VLOG(1) << "FunctionalHloRunner: compilation started.";
+  TF_ASSIGN_OR_RETURN(
+      std::unique_ptr<PjRtExecutable> executable,
+      PjRtCompile(modified_compile_options, computation, topology, &client));
+  VLOG(1) << "FunctionalHloRunner: compile succeeded.";
+  return executable;
+}
+
 // Runs the executable and may repeat for multiple times.
 // Since the input buffers may be donated by the PjrtClient, we re-create the
 // input PjrtBuffers for each repetition.
@@ -1013,6 +1030,7 @@ FunctionalHloRunner::RunInternal(
         running_options.profiler->CreateSession();
       }
     }
+    execute_options.launch_id = repeat;
     TF_ASSIGN_OR_RETURN(output_buffers,
                         executable->Execute(argument_ptrs, execute_options));
     VLOG(1) << "FunctionalHloRunner: ExecuteOnDevices succeeded (repeat = "

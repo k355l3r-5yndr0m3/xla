@@ -248,12 +248,44 @@ cc_library(
     srcs = ["hlo_extractor.cc"],
     hdrs = ["hlo_extractor.h"],
     deps = [
+        "//xla:literal_util",
+        "//xla:shape_util",
         "//xla:status",
         "//xla/hlo/ir:hlo",
         "//xla/service:compilation_environments",
         "//xla/service:hlo_verifier",
+        "//xla/tests:test_utils",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log:check",
+        "@tsl//tsl/platform:status",
+    ],
+)
+
+xla_cc_test(
+    name = "hlo_slicer_test",
+    srcs = ["hlo_slicer_test.cc"],
+    deps = [
+        ":hlo_slicer",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/utils:hlo_matchers",
+        "//xla/tests:hlo_test_base",
+        "//xla/tests:xla_internal_test_main",
+        "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest",
+    ],
+)
+
+cc_library(
+    name = "hlo_slicer",
+    srcs = ["hlo_slicer.cc"],
+    hdrs = ["hlo_slicer.h"],
+    deps = [
+        "//xla/hlo/ir:hlo",
+        "//xla/service:call_graph",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/types:span",
     ],
 )
 
@@ -379,19 +411,17 @@ cc_library(
         ":hlo_module_loader",
         ":prepare_reference_module",
         ":run_hlo_module_proto_cc",
-        "//xla:debug_options_flags",
         "//xla:error_spec",
         "//xla:literal",
         "//xla:literal_comparison",
         "//xla:util",
         "//xla:xla_data_proto_cc",
-        "//xla/client/lib:testing",
         "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_proto_cc",
         "//xla/service:hlo_runner",
         "//xla/service:hlo_verifier",
         "//xla/tests:test_utils",
         "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:status",
     ],
@@ -468,11 +498,12 @@ xla_cc_test(
         "//xla/service:collective_ops_utils",
         "//xla/service:despecializer",
         "//xla/service:hlo_verifier",
+        "//xla/service/spmd:spmd_partitioner",
+        "//xla/tests:client_library_test_base",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
         "@com_google_absl//absl/strings",
         "@tsl//tsl/lib/core:status_test_util",
-        "@tsl//tsl/platform:test",
     ],
 )
 

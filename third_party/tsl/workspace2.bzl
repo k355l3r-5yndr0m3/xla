@@ -26,7 +26,9 @@ load("//third_party/gemmlowp:workspace.bzl", gemmlowp = "repo")
 load("//third_party/hwloc:workspace.bzl", hwloc = "repo")
 load("//third_party/jpeg:workspace.bzl", jpeg = "repo")
 load("//third_party/nasm:workspace.bzl", nasm = "repo")
+load("//third_party/py/ml_dtypes:workspace.bzl", ml_dtypes = "repo")
 load("//third_party/pybind11_abseil:workspace.bzl", pybind11_abseil = "repo")
+load("//third_party/pybind11_bazel:workspace.bzl", pybind11_bazel = "repo")
 load("//third_party/tensorrt:workspace.bzl", tensorrt = "repo")
 
 # Import external repository rules.
@@ -46,8 +48,10 @@ def _initialize_third_party():
     gemmlowp()
     hwloc()
     jpeg()
+    ml_dtypes()
     nasm()
     pybind11_abseil()
+    pybind11_bazel()
     tensorrt()
 
     # copybara: tsl vendor
@@ -143,14 +147,6 @@ def _tf_repositories():
     )
 
     tf_http_archive(
-        name = "mkl_dnn",
-        build_file = "//third_party/mkl_dnn:mkldnn.BUILD",
-        sha256 = "a0211aeb5e7dad50b97fa5dffc1a2fe2fe732572d4164e1ee8750a2ede43fbec",
-        strip_prefix = "oneDNN-0.21.3",
-        urls = tf_mirror_urls("https://github.com/oneapi-src/oneDNN/archive/v0.21.3.tar.gz"),
-    )
-
-    tf_http_archive(
         name = "mkl_dnn_v1",
         build_file = "//third_party/mkl_dnn:mkldnn_v1.BUILD",
         sha256 = "dc2b9bc851cd8d5a6c4622f7dc215bdb6b32349962875f8bf55cceed45a4c449",
@@ -159,9 +155,27 @@ def _tf_repositories():
     )
 
     tf_http_archive(
+        name = "onednn",
+        build_file = "//third_party/mkl_dnn:mkldnn_v1.BUILD",
+        sha256 = "8b1db9cc5799ae39c2a567eb836962de0346d79fbc3d8e6f7090a3d9f8729129",
+        strip_prefix = "oneDNN-3.2",
+        urls = tf_mirror_urls("https://github.com/oneapi-src/oneDNN/archive/refs/tags/v3.2.tar.gz"),
+    )
+
+    tf_http_archive(
         name = "mkl_dnn_acl_compatible",
-        build_file = "//third_party/mkl_dnn:mkldnn_acl.BUILD",
-        patch_file = ["//third_party/mkl_dnn:onednn_acl_threadcap.patch", "//third_party/mkl_dnn:onednn_acl_fixed_format_kernels.patch", "//third_party/mkl_dnn:onednn_acl_depthwise_convolution.patch"],
+        build_file = "//tensorflow/third_party/mkl_dnn:mkldnn_acl.BUILD",
+        patch_file = [
+            "//tensorflow/third_party/mkl_dnn:onednn_acl_threadcap.patch",
+            "//tensorflow/third_party/mkl_dnn:onednn_acl_remove_winograd.patch",
+            "//tensorflow/third_party/mkl_dnn:onednn_acl_fixed_format_kernels.patch",
+            "//tensorflow/third_party/mkl_dnn:onednn_acl_depthwise_convolution.patch",
+            "//tensorflow/third_party/mkl_dnn:onednn_acl_threadpool_scheduler.patch",
+            "//tensorflow/third_party/mkl_dnn:onednn_acl_reorder_padded.patch",
+            "//tensorflow/third_party/mkl_dnn:onednn_acl_reorder_update.patch",
+            "//tensorflow/third_party/mkl_dnn:onednn_acl_reorder.patch",
+            "//tensorflow/third_party/mkl_dnn:onednn_acl_thread_local_scheduler.patch",
+        ],
         sha256 = "a50993aa6265b799b040fe745e0010502f9f7103cc53a9525d59646aef006633",
         strip_prefix = "oneDNN-2.7.3",
         urls = tf_mirror_urls("https://github.com/oneapi-src/oneDNN/archive/v2.7.3.tar.gz"),
@@ -169,11 +183,13 @@ def _tf_repositories():
 
     tf_http_archive(
         name = "compute_library",
-        sha256 = "e20a060d3c4f803889d96c2f0b865004ba3ef4e228299a44339ea1c1ba827c85",
-        strip_prefix = "ComputeLibrary-22.11",
-        build_file = "//third_party/compute_library:BUILD",
-        patch_file = ["//third_party/compute_library:compute_library.patch", "//third_party/compute_library:acl_fixed_format_kernels_striding.patch", "//third_party/compute_library:acl_openmp_fix.patch"],
-        urls = tf_mirror_urls("https://github.com/ARM-software/ComputeLibrary/archive/v22.11.tar.gz"),
+        patch_file = [
+            "//third_party/compute_library:compute_library.patch",
+            "//third_party/compute_library:acl_thread_local_scheduler.patch",
+        ],
+        sha256 = "c4ca329a78da380163b2d86e91ba728349b6f0ee97d66e260a694ef37f0b0d93",
+        strip_prefix = "ComputeLibrary-23.05.1",
+        urls = tf_mirror_urls("https://github.com/ARM-software/ComputeLibrary/archive/v23.05.1.tar.gz"),
     )
 
     tf_http_archive(
@@ -339,10 +355,10 @@ def _tf_repositories():
     tf_http_archive(
         name = "curl",
         build_file = "//third_party:curl.BUILD",
-        sha256 = "5fd29000a4089934f121eff456101f0a5d09e2a3e89da1d714adf06c4be887cb",
-        strip_prefix = "curl-8.0.1",
+        sha256 = "2e5a9b8fcdc095bdd2f079561f369de71c5eb3b80f00a702fbe9a8b8d9897891",
+        strip_prefix = "curl-8.1.2",
         system_build_file = "//third_party/systemlibs:curl.BUILD",
-        urls = tf_mirror_urls("https://curl.haxx.se/download/curl-8.0.1.tar.gz"),
+        urls = tf_mirror_urls("https://curl.haxx.se/download/curl-8.1.2.tar.gz"),
     )
 
     # WARNING: make sure ncteisen@ and vpai@ are cc-ed on any CL to change the below rule

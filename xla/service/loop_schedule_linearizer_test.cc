@@ -15,23 +15,13 @@ limitations under the License.
 
 #include "xla/service/loop_schedule_linearizer.h"
 
-#include <set>
-
-#include "xla/debug_options_flags.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
-#include "xla/hlo/utils/hlo_matchers.h"
-#include "xla/literal.h"
 #include "xla/service/copy_insertion.h"
-#include "xla/service/hlo_runner.h"
-#include "xla/shape_util.h"
-#include "xla/test.h"
 #include "xla/test_helpers.h"
 #include "xla/tests/hlo_test_base.h"
-#include "xla/xla_data.pb.h"
-#include "tsl/platform/test_benchmark.h"
 
 namespace xla {
 namespace {
@@ -72,9 +62,10 @@ int64_t CountControlEdges(const HloModule& module) {
 
 class LoopScheduleLinearizerTest : public HloTestBase {
  protected:
-  void InsertCopies(HloModule* module) {
+  void InsertCopies(HloModule* module, bool expect_change) {
     LoopScheduleLinearizer loop_schedule_linearizer;
-    ASSERT_IS_OK(loop_schedule_linearizer.Run(module).status());
+    TF_ASSERT_OK_AND_ASSIGN(bool changed, loop_schedule_linearizer.Run(module));
+    ASSERT_EQ(changed, expect_change);
 
     CopyInsertion copy_insertion;
     ASSERT_IS_OK(copy_insertion.Run(module).status());
@@ -115,7 +106,7 @@ ENTRY entry {
   )";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(hlo_string));
-  InsertCopies(module.get());
+  InsertCopies(module.get(), /*expect_change=*/true);
   EXPECT_EQ(CountCopies(
                 *module->entry_computation()->root_instruction()->while_body()),
             0);
@@ -124,5 +115,49 @@ ENTRY entry {
             1);
 }
 
+TEST_F(LoopScheduleLinearizerTest, SkipAsyncCollectives) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+add {
+  x = s32[] parameter(0)
+  y = s32[] parameter(1)
+  ROOT add = s32[] add(x, y)
+}
+
+while_body {
+  input = (s32[], s32[]) parameter(0)
+  counter = s32[] get-tuple-element(input), index=0
+  buffer = s32[] get-tuple-element(input), index=1
+
+  one = s32[] constant(1)
+
+  updated_counter = s32[] add(counter, one)
+
+  updated_buffer = s32[] add(buffer, counter)
+  ar_start = s32[] all-reduce-start(updated_buffer), replica_groups={}, to_apply=add
+  ar_done = s32[] all-reduce-done(ar_start)
+  ROOT out = (s32[], s32[]) tuple(updated_counter, ar_done)
+}
+
+while_cond {
+  input = (s32[], s32[]) parameter(0)
+  counter = s32[] get-tuple-element(input), index=0
+  bound = s32[] constant(100)
+  ROOT cmp = pred[] compare(counter, bound), direction=LT
+}
+
+ENTRY entry {
+  zero = s32[] constant(0)
+  buffer = s32[] parameter(0)
+  while_input = (s32[], s32[]) tuple(zero, buffer)
+  ROOT out = (s32[], s32[]) while(while_input), condition=while_cond, body=while_body
+}
+
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  InsertCopies(module.get(), /*expect_change=*/false);
+}
 }  // namespace
 }  // namespace xla

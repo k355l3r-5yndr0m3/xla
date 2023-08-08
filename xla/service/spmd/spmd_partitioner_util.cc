@@ -378,8 +378,8 @@ std::optional<HloSharding> PartialReplicateReshardCompatibleSharding(
     reshape_dimensions.push_back(num_target_replication);
   }
 
-  auto reshape_tile_assignment = partial_sharding.tile_assignment();
-  reshape_tile_assignment.Reshape(reshape_dimensions);
+  auto reshape_tile_assignment =
+      partial_sharding.tile_assignment().Reshape(reshape_dimensions);
 
   // Transpose.
   std::vector<int64_t> perm;
@@ -397,8 +397,7 @@ std::optional<HloSharding> PartialReplicateReshardCompatibleSharding(
       perm);
 
   // Reshape to target shape
-  auto transpose_tile_assignment = transpose_sharding.tile_assignment();
-  transpose_tile_assignment.Reshape(
+  auto transpose_tile_assignment = transpose_sharding.tile_assignment().Reshape(
       target_sharding.tile_assignment().dimensions());
 
   bool groups_matching = true;
@@ -936,14 +935,12 @@ HloInstruction* ExchangeHaloCompact(
     int64_t limit;
     int64_t cp_idx;
     int64_t halo_offset;
+    int64_t halo_at_shard;
   };
 
   // Find a list of halos for each shard. Each halo can be a real collective-
   // permute, a slice of the self tensor, or all padding.
   std::vector<std::vector<Halo>> halos(shard_count);
-  // Element at index i: dst halos for src core i, where each halo is
-  // represented as a pair (shard_ordinal, offset in halos[shard_ordinal]).
-  std::vector<std::vector<std::pair<int64_t, int64_t>>> src_to_dst(shard_count);
   constexpr int64_t kPaddingShard = -2;
   constexpr int64_t kSelfShard = -1;
   int64_t max_window_size = 0;
@@ -963,25 +960,76 @@ HloInstruction* ExchangeHaloCompact(
       if (halo.start < 0) {
         halo.start += input_shard_size;
       }
-      int64_t size =
-          std::min(input_shard_size - halo.start, limit - next_start);
-      halo.limit = halo.start + size;
-      if (next_start < 0 || next_start >= input_shard_size * shard_count) {
+      int64_t size = limit - next_start;
+      if (next_start < 0 || next_start >= base_shape.dimensions(dim)) {
+        if (next_start < 0) {
+          // Left padding bounded by offset zero.
+          size = std::min(size, 0 - next_start);
+        }
         VLOG(3) << "Halo for shard i " << i << ": pad, size " << size;
+        halo.limit = halo.start + size;
         halo.cp_idx = kPaddingShard;
         next_start += size;
         continue;
       }
+      size = std::min(input_shard_size - halo.start, size);
+      halo.limit = halo.start + size;
       int64_t shard = next_start / input_shard_size;
+      halo.halo_at_shard = shard;
       // To be assigned.
       halo.cp_idx = kSelfShard;
-      if (shard != i) {
-        src_to_dst[shard].emplace_back(i, halos[i].size() - 1);
-      }
       next_start += size;
       VLOG(3) << "Halo for shard i " << i << ": shard " << shard << ", size "
               << size << ", start " << halo.start;
     }
+  }
+  // Element at index i: dst halos for src core i, where each halo is
+  // represented as a pair (shard_ordinal, offset in halos[shard_ordinal]).
+  std::vector<std::vector<std::pair<int64_t, int64_t>>> src_to_dst(shard_count);
+  {
+    // At each offset, unless all shards have padding data, we limit the size of
+    // the paddings to input_shard_size so that they don't force to pad the
+    // non-padding buffers too much.
+    std::vector<std::vector<Halo>> halos2(shard_count);
+    std::vector<int64_t> next_halo_idx(halos2.size(), 0);
+    while (true) {
+      bool all_padding = true;
+      bool empty = true;
+      for (int64_t i = 0; i < halos.size(); ++i) {
+        if (next_halo_idx[i] >= halos[i].size()) {
+          continue;
+        }
+        if (halos[i][next_halo_idx[i]].cp_idx != kPaddingShard) {
+          all_padding = false;
+        }
+        empty = false;
+      }
+      if (empty) {
+        break;
+      }
+      for (int64_t i = 0; i < halos.size(); ++i) {
+        if (next_halo_idx[i] >= halos[i].size()) {
+          continue;
+        }
+        Halo& h = halos[i][next_halo_idx[i]];
+        halos2[i].push_back(h);
+        Halo& new_h = halos2[i].back();
+        if (!all_padding && h.cp_idx == kPaddingShard &&
+            h.limit > input_shard_size) {
+          new_h.limit = input_shard_size;
+          h.start = 0;
+          h.limit -= input_shard_size;
+          VLOG(3) << "Split padding halo for shard i " << i << ": size "
+                  << new_h.limit - new_h.start;
+        } else {
+          next_halo_idx[i] += 1;
+        }
+        if (h.cp_idx != kPaddingShard && h.halo_at_shard != i) {
+          src_to_dst[h.halo_at_shard].emplace_back(i, halos2[i].size() - 1);
+        }
+      }
+    }
+    halos = std::move(halos2);
   }
   // Sort halos that are from the same src according to halo_offset, so that
   // they are more likely to have similar characteristics.
@@ -1110,7 +1158,7 @@ HloInstruction* ExchangeHaloCompact(
         all_padding = false;
         piece = cps[cp_index[i]].first;
       } else if (cp_index[i] == kSelfShard) {
-        if (piece_shape.dimensions(dim) == max_size) {
+        if (hlo->shape().dimensions(dim) == max_size) {
           piece = hlo;
         } else {
           std::vector<int64_t> starts(piece_shape.rank(), 0);
@@ -1343,6 +1391,10 @@ std::optional<HloInstruction*> ExchangeHaloAndGetValidData(
     // max_shard_size != shard_size_with_halo.
     if (max_shard_size == shard_size_with_halo &&
         max_halo > 2 * shard_size_with_halo) {
+      if (max_shard_size * 2 >= shard_count * hlo->shape().dimensions(dim)) {
+        // Easier to fallback to replication.
+        return std::nullopt;
+      }
       return ExchangeHaloCompact(
           hlo, base_shape, left_halo_size_function, right_halo_size_function,
           mask_invalid_region || force_mask_in_compact ? pad_value : nullptr,
@@ -1861,16 +1913,20 @@ std::optional<GroupedSharding> AlignGroupsWithInternal(
     }
   }
   if (matching_groups && !grouped_sharding.sharding.IsTileMaximal()) {
-    auto tiles = grouped_sharding.sharding.tile_assignment();
-    tiles.Each([&](absl::Span<const int64_t> indices, int64_t* device) {
-      *device = original_src_to_ref_permutation[*device];
-    });
+    auto tiles = [&] {
+      auto array =
+          grouped_sharding.sharding.tile_assignment().shared_array_clone();
+      array->Each([&](absl::Span<const int64_t> indices, int64_t* device) {
+        *device = original_src_to_ref_permutation[*device];
+      });
+      return TileAssignment(std::move(array));
+    }();
     grouped_sharding.sharding =
         grouped_sharding.sharding.ReplicateOnLastTileDim()
             ? HloSharding::PartialTile(tiles)
             : HloSharding::Tile(tiles);
   }
-  grouped_sharding.device_groups = std::move(reference.device_groups);
+  grouped_sharding.device_groups = reference.device_groups;
   return grouped_sharding;
 }
 
@@ -1954,15 +2010,22 @@ HloInstruction* PerGroupSliceFromReplicated(
   for (int64_t i = 0; i < group_dims.size(); ++i) {
     group_level_tile_dims[group_dims[i]] = group_dim_sizes[i];
   }
-  Array<int64_t> group_level_tile(group_level_tile_dims);
-  group_level_tile.Each([&](absl::Span<const int64_t> indices, int64_t* group) {
-    *group = 0;
-    for (int64_t dim : group_dims) {
-      *group *= group_level_tile.dim(dim);
-      *group += indices[dim];
+  auto group_level_tile = [&] {
+    absl::InlinedVector<int, 6> perm_dims(group_dims.begin(), group_dims.end());
+    absl::c_sort(perm_dims);
+    absl::InlinedVector<int, 6> perm_dim_map(group_level_tile_dims.size(), -1);
+    for (int i = 0; i < perm_dims.size(); ++i) {
+      perm_dim_map[perm_dims[i]] = i;
     }
-  });
-  auto group_level_sharding = HloSharding::Tile(group_level_tile);
+    absl::InlinedVector<int, 6> transpose_perm(group_dims.size());
+    for (int i = 0; i < group_dims.size(); ++i) {
+      transpose_perm[i] = perm_dim_map[group_dims[i]];
+      CHECK_NE(transpose_perm[i], -1);
+    }
+    return TileAssignment(group_level_tile_dims, group_dim_sizes,
+                          transpose_perm);
+  }();
+  auto group_level_sharding = HloSharding::Tile(std::move(group_level_tile));
   auto padded_hlo = PadBaseShapeBeforeUnevenTiledSharding(
       replicated, group_level_sharding, b);
   auto shard_shape =
@@ -2046,8 +2109,8 @@ HloSharding CreateMatchingShardingOnDims(
     tile_dims.push_back(source_sharding.tile_assignment().num_elements() /
                         num_tiles);
   }
-  auto tgt_tile_assignment = source_sharding.tile_assignment();
-  tgt_tile_assignment.Reshape(tile_dims);
+  auto tgt_tile_assignment =
+      source_sharding.tile_assignment().Reshape(tile_dims);
   if (to_be_partially_replicated) {
     return AlignShardingOnDims(HloSharding::PartialTile(tgt_tile_assignment),
                                target_dims, source_sharding, source_dims);
@@ -2135,8 +2198,8 @@ GatherScatterOperandsShardedAcrossParallelDims(
       new_tile_assignment_dims.pop_back();
       to_partially_replicate = false;
     }
-    auto new_tile_assignment = to_adjust->tile_assignment();
-    new_tile_assignment.Reshape(new_tile_assignment_dims);
+    auto new_tile_assignment =
+        to_adjust->tile_assignment().Reshape(new_tile_assignment_dims);
     if (to_partially_replicate) {
       *to_adjust =
           AlignShardingOnDims(HloSharding::PartialTile(new_tile_assignment),
@@ -2155,8 +2218,8 @@ GatherScatterOperandsShardedAcrossParallelDims(
         new_index_shard.tile_assignment().dim(
             indices_parallel_dims_ordered_as_operand[i]);
   }
-  auto operand_shard_tiles = new_operand_shard.tile_assignment();
-  operand_shard_tiles.Reshape(operand_shard_tile_dims);
+  auto operand_shard_tiles =
+      new_operand_shard.tile_assignment().Reshape(operand_shard_tile_dims);
   new_operand_shard =
       AlignShardingOnDims(new_operand_shard.ReplicateOnLastTileDim()
                               ? HloSharding::PartialTile(operand_shard_tiles)
@@ -2287,8 +2350,7 @@ HloInstruction* SliceDataFromWindowReshard(
 
 std::optional<PartitionedHlo::WindowedInputShardReturnValue> ReshardDataForPad(
     HloInstruction* pad_value, PaddingConfig pc, PartitionedHlo to_reshard,
-    const Shape& target_shape, const HloSharding& target_sharding,
-    SpmdBuilder* b) {
+    const HloSharding& target_sharding, SpmdBuilder* b) {
   // Create a window config to represent the pad.
   Window window;
   bool needs_masking = false;
@@ -2308,11 +2370,11 @@ std::optional<PartitionedHlo::WindowedInputShardReturnValue> ReshardDataForPad(
     // Need masking only if there is non-zero padding value or the operand is
     // unevenly partitioned. Halo exchange fills 0 in collective permute result
     // for non-destination cores.
-    needs_masking |=
-        shard_count > 1 &&
-        (pd.edge_padding_low() > 0 || pd.edge_padding_high() > 0 ||
-         pd.interior_padding() > 0) &&
-        (!pad_value_is_zero || target_shape.dimensions(i) % shard_count != 0);
+    needs_masking |= shard_count > 1 &&
+                     (pd.edge_padding_low() > 0 || pd.edge_padding_high() > 0 ||
+                      pd.interior_padding() > 0) &&
+                     (!pad_value_is_zero ||
+                      to_reshard.base_shape().dimensions(i) % shard_count != 0);
   }
   // In compact halo exchange, we can't skip masking.
   return to_reshard.ReshardAsWindowedInput(

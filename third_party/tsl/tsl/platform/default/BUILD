@@ -50,6 +50,15 @@ cc_library(
 )
 
 cc_library(
+    name = "criticality",
+    hdrs = ["//tsl/platform:criticality.h"],
+    textual_hdrs = ["criticality.h"],
+    deps = [
+        "//tsl/platform",
+    ],
+)
+
+cc_library(
     name = "cuda_libdevice_path",
     srcs = ["cuda_libdevice_path.cc"],
     hdrs = ["//tsl/platform:cuda_libdevice_path.h"],
@@ -159,6 +168,7 @@ cc_library(
         "//tsl/platform:types",
         "//tsl/protobuf:error_codes_proto_impl_cc",
         "@com_google_absl//absl/functional:any_invocable",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:optional",
         "@eigen_archive//:eigen3",
@@ -195,6 +205,24 @@ cc_library(
         "nobuilder",
     ],
     deps = ["//tsl/platform:types"],
+)
+
+cc_library(
+    name = "error_logging",
+    srcs = ["error_logging.cc"],
+    hdrs = ["//tsl/platform:error_logging.h"],
+    tags = [
+        "manual",
+        "no_oss",
+        "nobuilder",
+    ],
+    textual_hdrs = ["error_logging.h"],
+    deps = [
+        "//tsl/platform",
+        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+    ],
 )
 
 cc_library(
@@ -454,28 +482,6 @@ cc_library(
 )
 
 cc_library(
-    name = "test",
-    testonly = True,
-    srcs = ["test.cc"],
-    hdrs = ["//tsl/platform:test.h"],
-    tags = [
-        "manual",
-        "no_oss",
-        "nobuilder",
-    ],
-    deps = [
-        "//tsl/platform",
-        "//tsl/platform:logging",
-        "//tsl/platform:macros",
-        "//tsl/platform:net",
-        "//tsl/platform:path",
-        "//tsl/platform:strcat",
-        "//tsl/platform:types",
-        "@com_google_googletest//:gtest",
-    ],
-)
-
-cc_library(
     name = "tracing",
     srcs = [
         "tracing.cc",
@@ -559,6 +565,22 @@ cc_library(
     visibility = set_external_visibility(["//tensorflow:__subpackages__"]),
 )
 
+cc_library(
+    name = "statusor",
+    tags = [
+        "manual",
+        "no_oss",
+        "nobuilder",
+    ],
+    textual_hdrs = ["statusor.h"],
+    visibility = set_external_visibility(["//tensorflow:__subpackages__"]),
+    deps = [
+        "//tsl/platform:macros",
+        "//tsl/platform:status",
+        "@com_google_absl//absl/status:statusor",
+    ],
+)
+
 bzl_library(
     name = "cuda_build_defs_bzl",
     srcs = ["cuda_build_defs.bzl"],
@@ -590,6 +612,7 @@ filegroup(
         "posix_file_system.h",
         "stacktrace.h",
         "status.h",
+        "statusor.h",
         "tracing_impl.h",
         "//tsl/platform/profile_utils:cpu_utils.h",
         "//tsl/platform/profile_utils:i_cpu_utils_helper.h",
@@ -621,6 +644,7 @@ exports_files(
     srcs = glob(
         ["*"],
         exclude = [
+            "error_logging.h",
             "integral_types.h",
             "logging.h",
             "test.cc",
@@ -631,6 +655,7 @@ exports_files(
 
 exports_files(
     srcs = [
+        "error_logging.h",
         "integral_types.h",
         "logging.h",
         "test.cc",

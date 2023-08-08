@@ -1,6 +1,6 @@
 load("//xla:xla.bzl", "xla_cc_test")
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
-load("@tsl//tsl:tsl.default.bzl", "get_compatible_with_cloud")
+load("@tsl//tsl:tsl.default.bzl", "get_compatible_with_portable")
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library")
 load("@tsl//tsl/platform:build_config.bzl", "if_llvm_system_z_available")
 
@@ -12,7 +12,7 @@ package(
 
 gentbl_cc_library(
     name = "passes_inc_gen",
-    compatible_with = get_compatible_with_cloud(),
+    compatible_with = get_compatible_with_portable(),
     tbl_outs = [
         (
             [
@@ -37,7 +37,7 @@ cc_library(
         "rt_to_llvm.cc",
     ],
     hdrs = ["passes.h"],
-    compatible_with = get_compatible_with_cloud(),
+    compatible_with = get_compatible_with_portable(),
     deps = [
         ":custom_call_encoding",
         ":passes_inc_gen",
@@ -66,7 +66,7 @@ cc_library(
     name = "calling_convention",
     srcs = ["calling_convention.cc"],
     hdrs = ["calling_convention.h"],
-    compatible_with = get_compatible_with_cloud(),
+    compatible_with = get_compatible_with_portable(),
     deps = [
         "//xla/mlir/runtime/ir:rt",
         "@llvm-project//mlir:FuncDialect",
@@ -78,7 +78,7 @@ cc_library(
 xla_cc_test(
     name = "calling_convention_test",
     srcs = ["calling_convention_test.cc"],
-    compatible_with = get_compatible_with_cloud(),
+    compatible_with = get_compatible_with_portable(),
     deps = [
         ":calling_convention",
         "//xla/mlir/runtime/ir:rt",
@@ -95,7 +95,7 @@ cc_library(
     name = "compilation_pipeline_cpu",
     srcs = ["compilation_pipeline_cpu.cc"],
     hdrs = ["compilation_pipeline_cpu.h"],
-    compatible_with = get_compatible_with_cloud(),
+    compatible_with = get_compatible_with_portable(),
     visibility = ["//visibility:public"],
     deps = [
         ":compilation_pipeline_options",
@@ -103,7 +103,6 @@ cc_library(
         ":custom_call_encoding",
         ":passes",
         "//xla/mlir/backends/cpu/transforms:passes",
-        "//xla/mlir/framework/transforms:passes",
         "//xla/mlir/math/transforms:passes",
         "//xla/mlir/memref/transforms:passes",
         "//xla/mlir_hlo:transforms_passes",
@@ -121,12 +120,12 @@ cc_library(
         "@llvm-project//mlir:BuiltinToLLVMIRTranslation",
         "@llvm-project//mlir:ComplexToLLVM",
         "@llvm-project//mlir:ControlFlowDialect",
-        "@llvm-project//mlir:ConversionPasses",
         "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:FuncExtensions",
         "@llvm-project//mlir:FuncToLLVM",
+        "@llvm-project//mlir:GPUToGPURuntimeTransforms",
         "@llvm-project//mlir:GPUTransforms",
         "@llvm-project//mlir:LLVMToLLVMIRTranslation",
-        "@llvm-project//mlir:LinalgToLLVM",
         "@llvm-project//mlir:LinalgTransforms",
         "@llvm-project//mlir:MathDialect",
         "@llvm-project//mlir:MathToLLVM",
@@ -150,27 +149,31 @@ cc_library(
     name = "compilation_pipeline_gpu",
     srcs = ["compilation_pipeline_gpu.cc"],
     hdrs = ["compilation_pipeline_gpu.h"],
-    compatible_with = get_compatible_with_cloud(),
+    compatible_with = get_compatible_with_portable(),
     visibility = ["//visibility:public"],
     deps = [
         ":compilation_pipeline_options",
         ":compiler",
         ":passes",
+        "//xla/mlir/runtime/ir:rt",
         "//xla/mlir/runtime/ir/tests:testlib",
         "//xla/mlir_hlo",
         "//xla/mlir_hlo:lhlo",
         "//xla/mlir_hlo:lhlo_gpu",
         "//xla/runtime:compiler",
+        "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:AsyncDialect",
         "@llvm-project//mlir:AsyncToLLVM",
         "@llvm-project//mlir:AsyncTransforms",
         "@llvm-project//mlir:BuiltinToLLVMIRTranslation",
+        "@llvm-project//mlir:ControlFlowDialect",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:FuncToLLVM",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:LLVMToLLVMIRTranslation",
         "@llvm-project//mlir:MemRefDialect",
         "@llvm-project//mlir:MemRefToLLVM",
+        "@llvm-project//mlir:MemRefTransforms",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:ReconcileUnrealizedCasts",
         "@llvm-project//mlir:SCFDialect",
@@ -183,7 +186,7 @@ cc_library(
 cc_library(
     name = "compilation_pipeline_options",
     hdrs = ["compilation_pipeline_options.h"],
-    compatible_with = get_compatible_with_cloud(),
+    compatible_with = get_compatible_with_portable(),
     deps = [
         ":custom_call_encoding",
         "//xla/runtime:type_id",
@@ -195,7 +198,7 @@ cc_library(
     name = "custom_call_encoding",
     srcs = ["custom_call_encoding.cc"],
     hdrs = ["custom_call_encoding.h"],
-    compatible_with = get_compatible_with_cloud(),
+    compatible_with = get_compatible_with_portable(),
     deps = [
         "//xla:shape_util",
         "//xla/mlir/runtime/ir:rt",
@@ -218,7 +221,7 @@ cc_library(
     name = "jit_compiler",
     srcs = ["jit_compiler.cc"],
     hdrs = ["jit_compiler.h"],
-    compatible_with = get_compatible_with_cloud(),
+    compatible_with = get_compatible_with_portable(),
     deps = [
         ":calling_convention",
         ":compiler",
@@ -239,6 +242,7 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:Target",
         "@llvm-project//mlir:ExecutionEngineUtils",
+        "@llvm-project//mlir:FuncExtensions",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Parser",
         "@llvm-project//mlir:Pass",
@@ -265,7 +269,7 @@ cc_library(
     name = "specialization",
     srcs = ["specialization.cc"],
     hdrs = ["specialization.h"],
-    compatible_with = get_compatible_with_cloud(),
+    compatible_with = get_compatible_with_portable(),
     deps = [
         ":type_converter",
         "//xla/mlir/runtime/utils:constraints",
@@ -290,7 +294,7 @@ cc_library(
     name = "type_converter",
     srcs = ["type_converter.cc"],
     hdrs = ["type_converter.h"],
-    compatible_with = get_compatible_with_cloud(),
+    compatible_with = get_compatible_with_portable(),
     deps = [
         "//xla:shape_util",
         "//xla/mlir/runtime/ir:rt",
@@ -307,7 +311,7 @@ cc_library(
 xla_cc_test(
     name = "type_converter_test",
     srcs = ["type_converter_test.cc"],
-    compatible_with = get_compatible_with_cloud(),
+    compatible_with = get_compatible_with_portable(),
     deps = [
         ":type_converter",
         "//xla/runtime:types",
@@ -320,7 +324,7 @@ xla_cc_test(
 cc_library(
     name = "compiler",
     hdrs = ["compiler.h"],
-    compatible_with = get_compatible_with_cloud(),
+    compatible_with = get_compatible_with_portable(),
     deps = [
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Pass",
