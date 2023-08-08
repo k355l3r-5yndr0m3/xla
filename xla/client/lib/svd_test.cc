@@ -15,7 +15,9 @@ limitations under the License.
 
 #include "xla/client/lib/svd.h"
 
+#include <numeric>
 #include <utility>
+#include <vector>
 
 #include "xla/array2d.h"
 #include "xla/array3d.h"
@@ -33,7 +35,6 @@ limitations under the License.
 #include "xla/tests/test_macros.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/lib/core/status_test_util.h"
-#include "tsl/platform/tensor_float_32_utils.h"
 
 namespace xla {
 
@@ -55,9 +56,6 @@ class SVDTest : public ClientLibraryTestBase {
             {12, 48, 6, 62, 3},
         },
     };
-
-    // Test fails with TensorFloat-32 enabled
-    tsl::enable_tensor_float_32_execution(false);
   }
   void TearDown() override { ClientLibraryTestBase::TearDown(); }
 

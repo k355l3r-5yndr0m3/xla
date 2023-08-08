@@ -32,7 +32,7 @@ cc_library(
         "//xla:statusor",
         "//xla:types",
         "//xla:util",
-        "//xla/service:hlo_module_config",
+        "//xla:xla_proto_cc",
         "//xla/service/gpu:gpu_types",
         "//xla/service/gpu:metrics",
         "//xla/service/llvm_ir:llvm_command_line_options",
@@ -78,7 +78,6 @@ xla_cc_test(
     ],
     deps = [
         ":llvm_gpu_backend",
-        "//xla:types",
         "//xla/tests:xla_internal_test_main",
         "@llvm-project//llvm:Core",
         "@llvm-project//llvm:Support",

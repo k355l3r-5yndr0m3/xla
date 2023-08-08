@@ -23,8 +23,12 @@ limitations under the License.
 #include "rocm/rocm_config.h"
 
 #if TF_ROCM_VERSION >= 40500
+#if TF_ROCM_VERSION >= 50600
+#include "rocm/include/hipsolver/hipsolver.h"
+#else
 
 #include "rocm/include/hipsolver.h"
+#endif
 #include "xla/stream_executor/platform/dso_loader.h"
 #include "xla/stream_executor/platform/port.h"
 #include "tsl/platform/env.h"
@@ -34,10 +38,10 @@ namespace wrap {
 
 #ifdef PLATFORM_GOOGLE
 
-#define HIPSOLVER_API_WRAPPER(api_name)                        \
-  template <typename... Args>                                  \
-  auto api_name(Args... args)->decltype(::api_name(args...)) { \
-    return ::api_name(args...);                                \
+#define HIPSOLVER_API_WRAPPER(api_name)                          \
+  template <typename... Args>                                    \
+  auto api_name(Args... args) -> decltype(::api_name(args...)) { \
+    return ::api_name(args...);                                  \
   }
 
 #else
@@ -86,6 +90,14 @@ namespace wrap {
   __macro(hipsolverSgetrs_bufferSize)        \
   __macro(hipsolverZgetrs)                   \
   __macro(hipsolverZgetrs_bufferSize)        \
+  __macro(hipsolverSgesvd)                   \
+  __macro(hipsolverSgesvd_bufferSize)        \
+  __macro(hipsolverDgesvd)                   \
+  __macro(hipsolverDgesvd_bufferSize)        \
+  __macro(hipsolverCgesvd)                   \
+  __macro(hipsolverCgesvd_bufferSize)        \
+  __macro(hipsolverZgesvd)                   \
+  __macro(hipsolverZgesvd_bufferSize)        \
   __macro(hipsolverCpotrf)                   \
   __macro(hipsolverCpotrf_bufferSize)        \
   __macro(hipsolverDpotrf)                   \

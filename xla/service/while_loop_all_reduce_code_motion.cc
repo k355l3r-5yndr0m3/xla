@@ -30,11 +30,11 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/utils/hlo_query.h"
 #include "xla/literal_util.h"
 #include "xla/map_util.h"
 #include "xla/service/call_graph.h"
 #include "xla/service/collective_ops_utils.h"
-#include "xla/service/hlo_query.h"
 #include "xla/service/hlo_replication_analysis.h"
 #include "xla/status.h"
 #include "xla/xla_data.pb.h"
@@ -1049,6 +1049,11 @@ StatusOr<bool> WhileLoopAllReduceCodeMotion::Run(
         }
         TF_RETURN_IF_ERROR(computation->ReplaceInstructionWithDifferentShape(
             all_reduce, all_reduce->mutable_operand(0)));
+      }
+      // Needs to rebuild the call graph or we could access removed
+      // instructions.
+      if (run_next_pass) {
+        break;
       }
     }
   }

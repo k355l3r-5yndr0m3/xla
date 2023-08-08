@@ -2,6 +2,7 @@
 
 load("@tsl//tsl:tsl.bzl", "set_external_visibility")
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
+load("//xla:xla.bzl", "xla_cc_test")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -54,19 +55,40 @@ cc_library(
         ":c_api_decl",
         ":tpu_api",
         ":tpu_executor_c_api_hdrs",
-        ":tpu_platform_interface",
+        ":tpu_ops_c_api_hdrs",
         "//xla:executable_run_options",
         "//xla:literal",
         "//xla:shape_util",
+        "//xla:statusor",
         "//xla/hlo/ir:hlo",
-        "//xla/service:executable",
         "//xla/service:hlo_module_config",
         "//xla/service:maybe_owning_device_memory",
         "//xla/service:shaped_buffer",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:device_memory_allocator",
-        "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/types:span",
+    ],
+)
+
+xla_cc_test(
+    name = "c_api_conversions_test",
+    srcs = ["c_api_conversions_test.cc"],
+    deps = [
+        ":c_api_conversions",
+        ":c_api_decl",
+        "//xla:executable_run_options",
+        "//xla:shape_util",
+        "//xla:statusor",
+        "//xla:xla_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_module_config",
+        "//xla/service:hlo_parser",
+        "//xla/service:hlo_proto_cc",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:protobuf",
     ],
 )
 
@@ -84,7 +106,6 @@ cc_library(
     deps = [
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/functional:function_ref",
-        "@com_google_absl//absl/types:optional",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:platform_port",
@@ -142,7 +163,6 @@ cc_library(
         "tpu_executor.h",
         "tpu_platform.h",
         "tpu_stream.h",
-        "tpu_timer.h",
     ],
     visibility = ["//visibility:public"],
     deps = [
@@ -195,7 +215,6 @@ cc_library(
         "tpu_platform_interface.h",
         "tpu_stream.h",
         "tpu_stream_interface.h",
-        "tpu_timer.h",
     ],
     deps = [
         ":c_api_conversions",
@@ -233,7 +252,6 @@ cc_library(
         "tpu_executor.h",
         "tpu_platform.h",
         "tpu_stream.h",
-        "tpu_timer.h",
     ],
     deps = [
         ":c_api_conversions",
@@ -253,6 +271,7 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/c:tsl_status",
         "@tsl//tsl/c:tsl_status_helper",
+        "@tsl//tsl/c:tsl_status_internal",
         "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
@@ -264,7 +283,10 @@ cc_library(
     name = "tpu_library_init_fns",
     hdrs = ["tpu_library_init_fns.inc"],
     visibility = ["//visibility:public"],
-    deps = [":tpu_executor_init_fns"],
+    deps = [
+        ":tpu_executor_init_fns",
+        ":tpu_ops_c_api_hdrs",
+    ],
 )
 
 cc_library(
@@ -274,13 +296,12 @@ cc_library(
     deps = [
         ":status_helper",
         ":tpu_api",
+        ":tpu_ops_c_api_hdrs",
         ":tpu_platform_interface",
         "//xla/service",
         "//xla/service:backend",
         "//xla/service:stream_pool",
-        "//xla/service:transfer_manager",
         "//xla/stream_executor:device_memory_allocator",
-        "@com_google_absl//absl/memory",
         "@tsl//tsl/platform:macros",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
@@ -357,24 +378,20 @@ cc_library(
     hdrs = ["tpu_op_executable.h"],
     deps = [
         ":c_api_conversions",
+        ":c_api_decl",
         ":proto_helper",
         ":status_helper",
         ":tpu_api",
         ":tpu_executable_interface",
         ":tpu_executor_base",
-        ":tpu_executor_c_api_hdrs",
         ":tpu_ops_c_api_hdrs",
         ":tpu_platform_interface",
-        "//xla:shape_util",
         "//xla:status",
-        "//xla:types",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/service:executable",
         "//xla/stream_executor",
-        "@com_google_absl//absl/types:optional",
         "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform:casts",
     ],
 )
 
@@ -406,10 +423,10 @@ cc_library(
 )
 
 cc_library(
-    name = "tpu_initializer_helper",
-    srcs = ["tpu_initializer_helper.cc"],
+    name = "tpu_initializer_framework_helper",
+    srcs = ["tpu_initializer_framework_helper.cc"],
     hdrs = [
-        "tpu_initializer_helper.h",
+        "tpu_initializer_framework_helper.h",
     ],
     visibility = ["//visibility:public"],
     deps = [
@@ -418,8 +435,24 @@ cc_library(
         ":tpu_api_dlsym_set_fn",
         ":tpu_executor_base",
         ":tpu_executor_c_api_hdrs",
+        ":tpu_initialize_util",
         ":tpu_library_init_fns",
         ":tpu_ops_c_api_hdrs",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:status",
+    ],
+)
+
+cc_library(
+    name = "tpu_initialize_util",
+    srcs = ["tpu_initialize_util.cc"],
+    hdrs = [
+        "tpu_initialize_util.h",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform:env",
@@ -427,7 +460,6 @@ cc_library(
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/platform/cloud:gcs_file_system",
     ],
 )
 
@@ -444,18 +476,13 @@ cc_library(
         ":tpu_executor_c_api_hdrs",
         ":tpu_executor_hdrs",
         ":tpu_platform_id",
-        "//xla:shape_util",
         "//xla:util",
-        "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/ir:hlo_module_group",
         "//xla/service:compiler",
         "//xla/service:executable",
         "//xla/service:hlo_cost_analysis",
-        "//xla/service:shaped_buffer",
-        "//xla/stream_executor:device_memory_allocator",
         "@com_google_absl//absl/cleanup",
-        "@com_google_absl//absl/types:span",
     ],
     alwayslink = True,
 )
@@ -482,6 +509,7 @@ cc_library(
         "//xla:types",
         "//xla:util",
         "//xla/hlo/ir:hlo",
+        "//xla/service:compiler",
         "//xla/service:executable",
         "//xla/service:hlo_execution_profile",
         "//xla/service:hlo_profile_printer_data_cc",
@@ -490,7 +518,6 @@ cc_library(
         "//xla/service:transfer_manager",
         "//xla/stream_executor:stream_executor_headers",
         "@com_google_absl//absl/algorithm:container",
-        "@com_google_absl//absl/types:optional",
         "@com_google_absl//absl/types:span",
     ],
 )

@@ -1,4 +1,5 @@
 load("//xla:xla.bzl", "xla_cc_test")
+load("@tsl//tsl/platform:build_config.bzl", "tf_proto_library")
 
 package_group(
     name = "friends",
@@ -18,16 +19,178 @@ package_group(
 )
 
 package(
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = [
         ":friends",
         ":internal",
     ],
-    licenses = ["notice"],
 )
 
 exports_files([
     "BUILD",
 ])
+
+# TODO(hyeontaek): Move this target out of pjrt_ifrt.
+cc_library(
+    name = "xla_ifrt",
+    srcs = [
+        "xla_compiler.cc",
+        "xla_sharding.cc",
+    ],
+    hdrs = [
+        "xla_compiler.h",
+        "xla_sharding.h",
+    ],
+    deps = [
+        ":xla_compiler_proto_cc",
+        "//xla:xla_data_proto_cc",
+        "//xla/pjrt:pjrt_executable",
+        "//xla/python/ifrt",
+        "//xla/python/ifrt:serdes",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:IR",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
+
+tf_proto_library(
+    name = "xla_host_callback_proto",
+    srcs = ["xla_host_callback.proto"],
+    cc_api_version = 2,
+    protodeps = ["//xla:xla_data_proto"],
+)
+
+tf_proto_library(
+    name = "xla_compiler_proto",
+    srcs = ["xla_compiler.proto"],
+    protodeps = ["//xla/pjrt:compile_options_proto"],
+)
+
+cc_library(
+    name = "xla_program_serdes",
+    srcs = ["xla_program_serdes.cc"],
+    deps = [
+        ":xla_ifrt",
+        "//xla/mlir_hlo:mhlo_passes",
+        "//xla/python/ifrt:serdes",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Pass",
+        "@llvm-project//mlir:ReconcileUnrealizedCasts",
+        "@llvm-project//mlir:Support",
+        "@stablehlo//:stablehlo_portable_api",
+        "@stablehlo//:stablehlo_serialization",
+    ],
+    alwayslink = True,
+)
+
+xla_cc_test(
+    name = "xla_program_serdes_test",
+    srcs = ["xla_program_serdes_test.cc"],
+    deps = [
+        ":xla_ifrt",
+        ":xla_program_serdes",
+        "//xla/mlir_hlo",
+        "//xla/pjrt:mlir_to_hlo",
+        "//xla/python/ifrt:serdes",
+        "@com_google_googletest//:gtest_main",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Support",
+    ],
+)
+
+tf_proto_library(
+    name = "xla_sharding_proto",
+    srcs = ["xla_sharding.proto"],
+    protodeps = [
+        "//xla:xla_data_proto",
+        "//xla/python/ifrt:types_proto",
+    ],
+)
+
+cc_library(
+    name = "xla_sharding_serdes",
+    srcs = ["xla_sharding_serdes.cc"],
+    deps = [
+        ":xla_ifrt",
+        ":xla_sharding_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/python/ifrt",
+        "//xla/python/ifrt:serdes",
+        "//xla/python/ifrt:sharding_serdes",
+    ],
+    alwayslink = True,
+)
+
+xla_cc_test(
+    name = "xla_sharding_serdes_test",
+    srcs = ["xla_sharding_serdes_test.cc"],
+    deps = [
+        ":xla_ifrt",
+        ":xla_sharding_serdes",
+        "//xla/hlo/ir:hlo",
+        "//xla/python/ifrt:sharding_serdes",
+        "//xla/python/ifrt:sharding_test_util",
+        "@com_google_absl//absl/functional:bind_front",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+# TODO(hyeontaek): Move this target out of pjrt_ifrt.
+cc_library(
+    name = "xla_executable_impl_test_lib",
+    testonly = True,
+    srcs = ["xla_executable_impl_test_lib.cc"],
+    deps = [
+        ":xla_ifrt",
+        "//xla/pjrt:mlir_to_hlo",
+        "//xla/python/ifrt",
+        "//xla/python/ifrt:test_util",
+        "@com_google_absl//absl/strings",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:statusor",
+    ],
+    alwayslink = True,
+)
+
+# TODO(hyeontaek): Move this target out of pjrt_ifrt.
+xla_cc_test(
+    name = "xla_executable_test_no_impl",
+    srcs = [],
+    deps = [
+        ":xla_executable_impl_test_lib",
+        "//xla/python/ifrt:no_impl_test_main",
+        "@com_google_googletest//:gtest",
+    ],
+)
+
+# TODO(hyeontaek): Move this target out of pjrt_ifrt.
+xla_cc_test(
+    name = "xla_sharding_test",
+    size = "small",
+    srcs = ["xla_sharding_test.cc"],
+    deps = [
+        ":tfrt_cpu_client_test_lib",
+        ":xla_ifrt",
+        "//xla:xla_data_proto_cc",
+        "//xla/python/ifrt:sharding_test_util",
+        "//xla/python/ifrt:tuple_impl_test_lib",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:status_matchers",
+    ],
+)
 
 cc_library(
     name = "pjrt_ifrt",
@@ -36,6 +199,7 @@ cc_library(
         "pjrt_client.cc",
         "pjrt_compiler.cc",
         "pjrt_executable.cc",
+        "pjrt_host_callback.cc",
         "pjrt_tuple.cc",
     ],
     hdrs = [
@@ -43,23 +207,28 @@ cc_library(
         "pjrt_client.h",
         "pjrt_compiler.h",
         "pjrt_executable.h",
+        "pjrt_host_callback.h",
         "pjrt_tuple.h",
     ],
     deps = [
+        ":xla_ifrt",
         "//xla:literal",
         "//xla:shape_util",
         "//xla:statusor",
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/client:xla_computation",
-        "//xla/pjrt:mlir_to_hlo",
+        "//xla/pjrt:host_callback",
         "//xla/pjrt:pjrt_client",
+        "//xla/pjrt:pjrt_executable",
         "//xla/pjrt:utils",
         "//xla/python/ifrt",
         "//xla/service:hlo_proto_cc",
         "//xla/translate/mhlo_to_hlo:type_to_shape",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
@@ -71,14 +240,14 @@ cc_library(
 
 cc_library(
     name = "tfrt_cpu_client_test_lib",
-    testonly = 1,
+    testonly = True,
     srcs = ["tfrt_cpu_client_test_lib.cc"],
     deps = [
         ":pjrt_ifrt",
         "//xla/pjrt:tfrt_cpu_pjrt_client",
         "//xla/python/ifrt:test_util",
     ],
-    alwayslink = 1,
+    alwayslink = True,
 )
 
 xla_cc_test(
@@ -88,6 +257,8 @@ xla_cc_test(
     deps = [
         ":tfrt_cpu_client_test_lib",
         "//xla/python/ifrt:array_impl_test_lib",
+        "//xla/python/ifrt:test_util",
+        "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest",
     ],
 )
@@ -109,7 +280,9 @@ xla_cc_test(
     srcs = ["pjrt_executable_impl_test_tfrt_cpu.cc"],
     deps = [
         ":tfrt_cpu_client_test_lib",
-        "//xla/python/ifrt:executable_impl_test_lib",
+        ":xla_executable_impl_test_lib",
+        "//xla/python/ifrt:test_util",
+        "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest",
     ],
 )

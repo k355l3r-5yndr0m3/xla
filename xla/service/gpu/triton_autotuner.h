@@ -15,16 +15,16 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_TRITON_AUTOTUNER_H_
 #define XLA_SERVICE_GPU_TRITON_AUTOTUNER_H_
 
-#include <memory>
 #include <vector>
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/strings/string_view.h"
+#include "xla/autotuning.pb.h"
+#include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_module.h"
-#include "xla/service/gpu/gpu_serializable_autotuner.h"
+#include "xla/service/gpu/autotuner_util.h"
 #include "xla/service/hlo_pass_interface.h"
 #include "tsl/platform/threadpool.h"
-#include "tsl/protobuf/autotuning.pb.h"
 
 namespace xla {
 namespace gpu {
@@ -32,16 +32,11 @@ namespace gpu {
 // Find best tiling configuration for each triton fusion outlined.
 class TritonAutotuner : public HloModulePass {
  public:
-  explicit TritonAutotuner(const AutotuningConfig& config,
+  explicit TritonAutotuner(const AutotuneConfig& config,
                            tsl::thread::ThreadPool* thread_pool)
       : config_(config), thread_pool_(thread_pool) {}
 
   absl::string_view name() const override { return "triton-autotuner"; }
-
-  static void ClearAutotuneResults();
-  static void ClearCompilationCache();
-  static Status WriteAutotuneResults(AutotuneResults* results);
-  static Status LoadAutotuneResults(const AutotuneResults& results);
 
   using HloPassInterface::Run;
   StatusOr<bool> Run(
@@ -49,19 +44,15 @@ class TritonAutotuner : public HloModulePass {
       const absl::flat_hash_set<absl::string_view>& execution_threads) override;
 
  private:
-  AutotuningConfig config_;
+  AutotuneConfig config_;
   tsl::thread::ThreadPool* thread_pool_;
 };
 
 // TODO(b/266210099): have a way to generate/load these dynamically.
-// Returns a list of possible tilings for a gemm performed in Triton.
-std::vector<tensorflow::AutotuneResult::TritonGemmKey>
-GetPossibleMatmulAutotuneConfigs(se::CudaComputeCapability compute_capability);
-
-// Extracts an HLO instruction into a new HLO module replacing its operands
-// with parameter instructions.
-std::unique_ptr<HloModule> ExtractInstructionIntoNewModule(
-    const HloInstruction& hlo);
+// Returns a list of possible tilings for a GEMM performed in Triton.
+std::vector<AutotuneResult::TritonGemmKey> GetPossibleMatmulAutotuneConfigs(
+    const HloInstruction& instr, se::CudaComputeCapability compute_capability,
+    bool exhaustive_tiling_search = false);
 
 }  // namespace gpu
 }  // namespace xla

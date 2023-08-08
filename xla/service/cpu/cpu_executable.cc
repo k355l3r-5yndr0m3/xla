@@ -75,8 +75,8 @@ CpuExecutable::CpuExecutable(
         std::make_shared<BufferAssignmentProto>(assignment_->ToProto());
   }
   if (has_module()) {
-    XlaDebugInfoManager::Get()->RegisterModule(
-        module().unique_id(), shared_module(), buffer_assignment_);
+    XlaDebugInfoManager::Get()->RegisterModule(shared_module(),
+                                               buffer_assignment_);
   }
 
   // Resolve symbols in the constructor rather than at execution time to avoid
@@ -110,8 +110,8 @@ CpuExecutable::CpuExecutable(
         std::make_shared<BufferAssignmentProto>(assignment_->ToProto());
   }
   if (has_module()) {
-    XlaDebugInfoManager::Get()->RegisterModule(
-        module().unique_id(), shared_module(), buffer_assignment_);
+    XlaDebugInfoManager::Get()->RegisterModule(shared_module(),
+                                               buffer_assignment_);
   }
 }
 
@@ -570,7 +570,7 @@ Status XlaRuntimeCpuExecutable::Execute(
   // Initialize state required for running functions exported from FFI modules.
   absl::StatusOr<runtime::ffi::FfiStateVector> ffi_state =
       ffi_modules_state_.state_vector();
-  if (!ffi_state.ok()) return FromAbslStatus(ffi_state.status());
+  if (!ffi_state.ok()) return ffi_state.status();
 
   runtime::CustomCall::UserData user_data(run_options, &ffi_state.value());
 

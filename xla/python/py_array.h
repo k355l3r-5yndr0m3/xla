@@ -104,6 +104,17 @@ class PyArray : public pybind11::object {
       std::shared_ptr<PyClient> py_client, std::shared_ptr<Traceback> traceback,
       tsl::RCReference<ifrt::Array> ifrt_array, bool weak_type, bool committed);
 
+  static PyArray MakeFromIfrtArrayAndSharding(
+      std::shared_ptr<PyClient> py_client, std::shared_ptr<Traceback> traceback,
+      tsl::RCReference<ifrt::Array> ifrt_array, pybind11::object sharding,
+      bool weak_type, bool committed);
+
+  // pybind11-index-annotation BEGIN
+  // refs {
+  //   module_path: "tensorflow/compiler/xla/python/xla.cc"
+  //   module_arg {}
+  // }
+  // pybind11-index-annotation END
   static Status RegisterTypes(pybind11::module& m);
 
   using Storage = PyArray_Storage;

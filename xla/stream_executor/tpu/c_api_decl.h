@@ -57,7 +57,6 @@ typedef struct SE_Platform SE_Platform;
 typedef struct SE_StreamExecutor SE_StreamExecutor;
 typedef struct SE_Stream SE_Stream;
 typedef struct SE_Event SE_Event;
-typedef struct SE_Timer SE_Timer;
 
 typedef struct TpuSerializedProto {
   const char* bytes;
@@ -244,6 +243,7 @@ typedef struct XLA_Layout {
   TileList tiles;
   int index_primitive_type;
   int pointer_primitive_type;
+  int64_t element_size_in_bits;
   int64_t memory_space;
   int64_t dynamic_shape_metadata_prefix_bytes;
 } XLA_Layout;
@@ -351,6 +351,8 @@ typedef void (*XLA_StatusCallbackFn)(void*, TF_Status*);
 typedef struct SE_TpuTopology SE_TpuTopology;
 typedef struct SE_TpuTopology_Core SE_TpuTopology_Core;
 typedef struct SE_TpuTopology_Core SE_TpuTopology_Host;
+
+typedef struct SE_OutsideCompilationParams SE_OutsideCompilationParams;
 
 #ifdef __cplusplus
 }

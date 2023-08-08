@@ -16,7 +16,8 @@ limitations under the License.
 #include "xla/python/ifrt/ir/ifrt_ops.h"
 
 #include <algorithm>
-#include <cstdint>
+#include <optional>
+#include <utility>
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallSet.h"
@@ -33,6 +34,7 @@ limitations under the License.
 #include "mlir/IR/Value.h"  // from @llvm-project
 #include "mlir/Interfaces/CallInterfaces.h"  // from @llvm-project
 #include "mlir/Support/LogicalResult.h"  // from @llvm-project
+#include "xla/python/ifrt/ir/constants.h"
 #include "xla/python/ifrt/ir/ifrt_dialect.h"
 
 // Generated definitions.
@@ -58,6 +60,25 @@ mlir::FailureOr<mlir::RankedTensorType> GetGlobalShape(mlir::Value value) {
   return GetGlobalShape(value.getType());
 }
 
+mlir::FailureOr<mlir::RankedTensorType> GetGlobalShapeFromLocal(
+    mlir::Type type, ShardingParam shard_param) {
+  if (auto local_ranked_tensor = type.dyn_cast<mlir::RankedTensorType>()) {
+    llvm::SmallVector<int64_t> global_shape;
+    auto local_shape = local_ranked_tensor.getShape();
+    if (local_shape.size() != shard_param.dim_shards().size()) {
+      return mlir::failure();
+    }
+    for (auto [idx, dim_shard] : llvm::enumerate(shard_param.dim_shards())) {
+      global_shape.push_back(dim_shard * local_shape[idx]);
+    }
+    return mlir::RankedTensorType::get(global_shape,
+                                       local_ranked_tensor.getElementType());
+  } else {
+    // IFRT arrays cannot be in the local view.
+    return mlir::failure();
+  }
+}
+
 template <typename T, typename U>
 mlir::LogicalResult VerifySameGlobalShape(mlir::Operation* op,
                                           llvm::StringRef lhs_mnemonic, T lhs,
@@ -80,24 +101,52 @@ mlir::LogicalResult VerifySameGlobalShape(mlir::Operation* op,
   return mlir::success();
 }
 
-// Verifies that
-// 1. Elements in `devices` are unique.
-// 2. Each of `inputs` and `outputs` is placed on a subset of `devices`.
+// Verifies that the global shape of a call op argument/result is the same
+// as the global shape of corresponding argument/result of the function in
+// local view.
+mlir::LogicalResult VerifyGlobalLocalShapesEquivalent(
+    mlir::Operation* op, llvm::StringRef call_mnemonic, mlir::Value call_value,
+    llvm::StringRef callee_mnemonic, mlir::Type callee_type) {
+  // The call values are in the global view.
+  mlir::FailureOr<mlir::RankedTensorType> call_shape =
+      GetGlobalShape(call_value);
+  if (mlir::failed(call_shape)) {
+    return op->emitOpError() << "fails to get global shape from "
+                             << call_mnemonic << ": " << call_value;
+  }
+  // The types of the CallOp func signature must be IfrtArrayType.
+  auto array = call_value.getType().dyn_cast<IfrtArrayType>();
+  if (array == nullptr) {
+    return mlir::failure();
+  }
+  // Convert from local shape to global shape using the sharding provided
+  // by the CallOp func signature.
+  mlir::FailureOr<mlir::RankedTensorType> callee_shape =
+      GetGlobalShapeFromLocal(callee_type, array.getSharding());
+  if (mlir::failed(callee_shape)) {
+    return op->emitOpError() << "fails to get global shape from "
+                             << callee_mnemonic << ": " << callee_type;
+  }
+  if (*call_shape != *callee_shape) {
+    return op->emitOpError()
+           << "requires the same global shape. " << call_mnemonic << " "
+           << *call_shape << " vs " << callee_mnemonic << " " << *callee_shape;
+  }
+  return mlir::success();
+}
+
+// Verifies that each of `inputs` and `outputs` is placed on a subset of
+// `devices`.
 mlir::LogicalResult VerifyDevicePlacement(
-    mlir::Operation* op, llvm::ArrayRef<int64_t> devices,
+    mlir::Operation* op, llvm::ArrayRef<int> devices,
     llvm::ArrayRef<IfrtArrayType> inputs,
     llvm::ArrayRef<IfrtArrayType> outputs) {
-  llvm::SmallSet<int64_t, 4> attr_devices;
-  for (const int64_t device : devices) {
-    if (!attr_devices.insert(device).second) {
-      return op->emitOpError()
-             << "has duplicate device id " << device << " in `devices` attr";
-    }
-  }
+  llvm::SmallSet<int, 4> device_set;
+  device_set.insert(devices.begin(), devices.end());
 
   for (const IfrtArrayType input : inputs) {
-    for (const int64_t input_device : input.getDevices()) {
-      if (!attr_devices.count(input_device)) {
+    for (const int input_device : input.getDevices()) {
+      if (!device_set.count(input_device)) {
         return op->emitOpError()
                << "requires all inputs placed on `devices` attr. The following "
                   "input is placed on device "
@@ -107,8 +156,8 @@ mlir::LogicalResult VerifyDevicePlacement(
   }
 
   for (const IfrtArrayType output : outputs) {
-    for (const int64_t output_device : output.getDevices()) {
-      if (!attr_devices.count(output_device)) {
+    for (const int output_device : output.getDevices()) {
+      if (!device_set.count(output_device)) {
         return op->emitOpError()
                << "requires all outputs placed on `devices` attr. The "
                   "following output is placed on device "
@@ -120,6 +169,63 @@ mlir::LogicalResult VerifyDevicePlacement(
   return mlir::success();
 }
 
+struct IoAlias {
+  int input_index;
+  int output_index;
+};
+
+mlir::LogicalResult VerifyIoAlias(mlir::Operation* op, IoAlias io_alias,
+                                  llvm::ArrayRef<IfrtArrayType> inputs,
+                                  llvm::ArrayRef<IfrtArrayType> outputs) {
+  if (io_alias.input_index < 0 || io_alias.input_index >= inputs.size()) {
+    return op->emitOpError()
+           << "can't alias input #" << io_alias.input_index << " to output #"
+           << io_alias.output_index << " as only having " << inputs.size()
+           << " inputs";
+  }
+  if (io_alias.output_index < 0 || io_alias.output_index >= outputs.size()) {
+    return op->emitOpError()
+           << "can't alias input #" << io_alias.input_index << " to output #"
+           << io_alias.output_index << " as only having " << outputs.size()
+           << " outputs";
+  }
+  if (inputs[io_alias.input_index] != outputs[io_alias.output_index]) {
+    return op->emitOpError()
+           << "can't alias input #" << io_alias.input_index << " to output #"
+           << io_alias.output_index
+           << " with different types: " << inputs[io_alias.input_index]
+           << " vs " << outputs[io_alias.output_index];
+  }
+  return mlir::success();
+}
+
+mlir::LogicalResult VerifyIoAliases(mlir::Operation* op,
+                                    mlir::ArrayAttr io_aliases,
+                                    llvm::ArrayRef<IfrtArrayType> inputs,
+                                    llvm::ArrayRef<IfrtArrayType> outputs) {
+  llvm::SmallSet<int, 4> aliased_inputs;
+  llvm::SmallSet<int, 4> aliased_outputs;
+  for (const auto& raw_io_alias :
+       io_aliases.getAsRange<mlir::DenseI32ArrayAttr>()) {
+    llvm::ArrayRef<int> io_alias_as_array = raw_io_alias.asArrayRef();
+    int aliased_input = io_alias_as_array[0];
+    int aliased_output = io_alias_as_array[1];
+    if (mlir::failed(VerifyIoAlias(op, IoAlias{aliased_input, aliased_output},
+                                   inputs, outputs))) {
+      return mlir::failure();
+    }
+    if (!aliased_inputs.insert(aliased_input).second) {
+      return op->emitOpError()
+             << "can't alias input #" << aliased_input << " more than once";
+    }
+    if (!aliased_outputs.insert(aliased_output).second) {
+      return op->emitOpError()
+             << "can't alias output #" << aliased_outputs << " more than once";
+    }
+  }
+  return mlir::success();
+}
+
 }  // namespace
 
 mlir::LogicalResult ReshardOp::verify() {
@@ -128,7 +234,7 @@ mlir::LogicalResult ReshardOp::verify() {
 }
 
 mlir::LogicalResult AssembleOp::verify() {
-  llvm::SmallVector<int64_t, 4> input_devices;
+  llvm::SmallVector<int, 4> input_devices;
   for (const mlir::Value input : getInputs()) {
     const auto array = llvm::cast<IfrtArrayType>(input.getType());
     if (array.getDevices().size() != 1) {
@@ -138,8 +244,7 @@ mlir::LogicalResult AssembleOp::verify() {
     }
     input_devices.push_back(array.getDevices()[0]);
   }
-  const llvm::ArrayRef<int64_t> output_devices =
-      getOutput().getType().getDevices();
+  const llvm::ArrayRef<int> output_devices = getOutput().getType().getDevices();
   if (!std::equal(input_devices.begin(), input_devices.end(),
                   output_devices.begin())) {
     return emitOpError() << "requires the same input/output device list. Input "
@@ -149,7 +254,7 @@ mlir::LogicalResult AssembleOp::verify() {
 }
 
 mlir::LogicalResult DisassembleOp::verify() {
-  llvm::SmallVector<int64_t, 4> output_devices;
+  llvm::SmallVector<int, 4> output_devices;
   for (const mlir::Value output : getOutputs()) {
     const auto array = llvm::cast<IfrtArrayType>(output.getType());
     if (array.getDevices().size() != 1) {
@@ -159,8 +264,7 @@ mlir::LogicalResult DisassembleOp::verify() {
     }
     output_devices.push_back(array.getDevices()[0]);
   }
-  const llvm::ArrayRef<int64_t> input_devices =
-      getInput().getType().getDevices();
+  const llvm::ArrayRef<int> input_devices = getInput().getType().getDevices();
   if (!std::equal(input_devices.begin(), input_devices.end(),
                   output_devices.begin())) {
     return emitOpError() << "requires the same input/output device list. Input "
@@ -172,24 +276,26 @@ mlir::LogicalResult DisassembleOp::verify() {
 mlir::CallInterfaceCallable CallOp::getCallableForCallee() {
   return (*this)->getAttrOfType<mlir::SymbolRefAttr>("callee");
 }
+void CallOp::setCalleeFromCallable(mlir::CallInterfaceCallable callee) {
+  // Direct call
+  if ((*this)->getAttrOfType<mlir::SymbolRefAttr>("callee")) {
+    (*this)->setAttr("callee", callee.get<mlir::SymbolRefAttr>());
+  }
+  // Indirect call, callee Value is the first operand.
+  return setOperand(0, callee.get<mlir::Value>());
+}
 
 mlir::Operation::operand_range CallOp::getArgOperands() { return getInputs(); }
+mlir::MutableOperandRange CallOp::getArgOperandsMutable() {
+  return getInputsMutable();
+}
 
 mlir::LogicalResult CallOp::verifySymbolUses(
-    mlir::SymbolTableCollection& symbolTable) {
-  const auto callee_attr =
-      (*this)->getAttrOfType<mlir::SymbolRefAttr>("callee");
-  if (!callee_attr) {
-    return emitOpError() << "requires `callee` SymbolRefAttr";
-  }
-  auto callee = symbolTable.lookupNearestSymbolFrom<mlir::func::FuncOp>(
-      *this, callee_attr);
-  if (!callee) {
-    return emitOpError() << "requires '" << callee_attr
-                         << "' to reference a valid function";
-  }
+    mlir::SymbolTableCollection& symbol_table) {
+  mlir::func::FuncOp callee = getCalleeOp(symbol_table);
   mlir::FunctionType callee_type = callee.getFunctionType();
-
+  auto local_view_attr =
+      (*this)->getAttrOfType<mlir::UnitAttr>(kIfrtLocalViewAttrName);
   // Verify inputs.
   if (callee_type.getNumInputs() != getInputs().size()) {
     return emitOpError() << "requires the same input size. Input "
@@ -197,10 +303,18 @@ mlir::LogicalResult CallOp::verifySymbolUses(
                          << callee_type.getNumInputs();
   }
   for (int i = 0; i < callee_type.getNumInputs(); ++i) {
-    if (mlir::failed(VerifySameGlobalShape(
-            *this, llvm::Twine("Input #").concat(llvm::Twine(i)).str(),
-            getInputs()[i], "Callee", callee_type.getInput(i)))) {
-      return mlir::failure();
+    if (local_view_attr == nullptr) {
+      if (mlir::failed(VerifySameGlobalShape(
+              *this, llvm::Twine("Input #").concat(llvm::Twine(i)).str(),
+              getInputs()[i], "Callee", callee_type.getInput(i)))) {
+        return mlir::failure();
+      }
+    } else {
+      if (mlir::failed(VerifyGlobalLocalShapesEquivalent(
+              *this, llvm::Twine("Input #").concat(llvm::Twine(i)).str(),
+              getInputs()[i], "Callee", callee_type.getInput(i)))) {
+        return mlir::failure();
+      }
     }
   }
 
@@ -211,10 +325,18 @@ mlir::LogicalResult CallOp::verifySymbolUses(
                          << callee_type.getNumResults();
   }
   for (int i = 0; i < callee_type.getNumResults(); ++i) {
-    if (mlir::failed(VerifySameGlobalShape(
-            *this, llvm::Twine("Output #").concat(llvm::Twine(i)).str(),
-            getOutputs()[i], "Callee", callee_type.getResult(i)))) {
-      return mlir::failure();
+    if (local_view_attr == nullptr) {
+      if (mlir::failed(VerifySameGlobalShape(
+              *this, llvm::Twine("Output #").concat(llvm::Twine(i)).str(),
+              getOutputs()[i], "Callee", callee_type.getResult(i)))) {
+        return mlir::failure();
+      }
+    } else {
+      if (mlir::failed(VerifyGlobalLocalShapesEquivalent(
+              *this, llvm::Twine("Output #").concat(llvm::Twine(i)).str(),
+              getOutputs()[i], "Callee", callee_type.getResult(i)))) {
+        return mlir::failure();
+      }
     }
   }
 
@@ -234,32 +356,37 @@ mlir::LogicalResult CallOp::verify() {
     output_arrays.push_back(output.getType().cast<IfrtArrayType>());
   }
 
-  return VerifyDevicePlacement(*this, getDevices(), input_arrays,
-                               output_arrays);
+  if (mlir::failed(VerifyDevicePlacement(*this, getDevices(), input_arrays,
+                                         output_arrays)) ||
+      mlir::failed(VerifyIoAliases(*this, getIoAliases(), input_arrays,
+                                   output_arrays))) {
+    return mlir::failure();
+  }
+  return mlir::success();
 }
 
 mlir::CallInterfaceCallable CallLoadedExecutableOp::getCallableForCallee() {
   return (*this)->getAttrOfType<mlir::SymbolRefAttr>("callee");
 }
+void CallLoadedExecutableOp::setCalleeFromCallable(
+    mlir::CallInterfaceCallable callee) {
+  // Direct call
+  if ((*this)->getAttrOfType<mlir::SymbolRefAttr>("callee")) {
+    (*this)->setAttr("callee", callee.get<mlir::SymbolRefAttr>());
+  }
+  // Indirect call, callee Value is the first operand.
+  return setOperand(0, callee.get<mlir::Value>());
+}
 
 mlir::Operation::operand_range CallLoadedExecutableOp::getArgOperands() {
   return getInputs();
 }
+mlir::MutableOperandRange CallLoadedExecutableOp::getArgOperandsMutable() {
+  return getInputsMutable();
+}
 
 mlir::LogicalResult CallLoadedExecutableOp::verifySymbolUses(
-    mlir::SymbolTableCollection& symbolTable) {
-  const auto callee_attr =
-      (*this)->getAttrOfType<mlir::SymbolRefAttr>("callee");
-  if (!callee_attr) {
-    return emitOpError() << "requires `callee` SymbolRefAttr";
-  }
-  auto callee = symbolTable.lookupNearestSymbolFrom<LoadedExecutableOp>(
-      *this, callee_attr);
-  if (!callee) {
-    return emitOpError() << "requires '" << callee_attr
-                         << "' to reference a valid LoadedExecutable";
-  }
-
+    mlir::SymbolTableCollection& symbol_table) {
   llvm::SmallVector<mlir::Type, 4> input_types;
   input_types.reserve(getInputs().size());
   for (const mlir::Value input : getInputs()) {
@@ -272,11 +399,28 @@ mlir::LogicalResult CallLoadedExecutableOp::verifySymbolUses(
   }
   auto func_type =
       mlir::FunctionType::get(getContext(), input_types, output_types);
+  LoadedExecutableOp callee = getCalleeOp(symbol_table);
   if (callee.getFunctionType() != func_type) {
     return emitOpError() << "requires callee signature matching " << func_type
                          << ". Actual " << callee.getFunctionType();
   }
   return mlir::success();
+}
+
+mlir::LogicalResult CallLoadedExecutableOp::verify() {
+  llvm::SmallVector<IfrtArrayType, 4> input_arrays;
+  input_arrays.reserve(getInputs().size());
+  for (const mlir::Value input : getInputs()) {
+    input_arrays.push_back(input.getType().cast<IfrtArrayType>());
+  }
+
+  llvm::SmallVector<IfrtArrayType, 4> output_arrays;
+  output_arrays.reserve(getOutputs().size());
+  for (const mlir::Value output : getOutputs()) {
+    output_arrays.push_back(output.getType().cast<IfrtArrayType>());
+  }
+
+  return VerifyIoAliases(*this, getIoAliases(), input_arrays, output_arrays);
 }
 
 mlir::LogicalResult LoadedExecutableOp::verify() {

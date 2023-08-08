@@ -1,5 +1,5 @@
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
-load("@tsl//tsl:tsl.default.bzl", "get_compatible_with_cloud")
+load("@tsl//tsl:tsl.default.bzl", "get_compatible_with_portable")
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library")
 
 package(
@@ -10,7 +10,7 @@ package(
 
 gentbl_cc_library(
     name = "passes_inc_gen",
-    compatible_with = get_compatible_with_cloud(),
+    compatible_with = get_compatible_with_portable(),
     tbl_outs = [
         (
             [
@@ -31,11 +31,11 @@ cc_library(
     srcs = [
         "legalize_i1_vector_transfers.cc",
         "legalize_library_ops.cc",
-        "lmhlo_to_cpu_runtime.cc",
         "remove_copies_to_out_params.cc",
         "sparse_rewrite_passes.cc",
         "xla_abi_legalization.cc",
         "xla_cpu_memref_element_cast_to_llvm.cc",
+        "xla_cpu_to_cpu_runtime.cc",
         "xla_rewrite_realloc_to_alloc.cc",
     ],
     hdrs = ["passes.h"],
@@ -56,6 +56,7 @@ cc_library(
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:LLVMCommonConversion",
         "@llvm-project//mlir:LLVMDialect",
+        "@llvm-project//mlir:LinalgDialect",
         "@llvm-project//mlir:MemRefDialect",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:SparseTensorDialect",

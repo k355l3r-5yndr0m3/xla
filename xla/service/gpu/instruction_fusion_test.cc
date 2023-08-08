@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/service/gpu/instruction_fusion.h"
 
+#include <memory>
+
+#include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/gpu/gpu_fusible.h"
@@ -32,6 +35,30 @@ class InstructionFusionTest : public HloTestBase {
   GpuInstructionFusion duplicating_instruction_fusion_{
       /*may_duplicate=*/true, TestGpuDeviceInfo::RTXA6000DeviceInfo()};
 };
+
+TEST_F(InstructionFusionTest, NoFusionIntoCustomFusionConsumer) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(R"(
+HloModule m
+
+c {
+  p0 = bf16[3000,53]{1,0} parameter(0)
+  p1 = bf16[22,53]{1,0} parameter(1)
+  d = bf16[3000,22]{1,0} dot(p0, p1),
+    lhs_contracting_dims={1}, rhs_contracting_dims={1}
+  r = bf16[1,1,3000,22]{3,2,1,0} reshape(d)
+  ROOT c = bf16[1,1,3000,22]{2,1,3,0} copy(r)
+}
+
+ENTRY e {
+  p1 = bf16[3000,53]{1,0} parameter(1)
+  p0 = bf16[22,53]{1,0} parameter(0)
+  cp0 = bf16[22,53]{1,0} convert(p0)
+  ROOT f = bf16[1,1,3000,22]{2,1,3,0} fusion(p1, cp0), kind=kCustom, calls=c
+})"));
+
+  EXPECT_FALSE(duplicating_instruction_fusion_.Run(module.get()).value());
+}
 
 TEST_F(InstructionFusionTest,
        CostlyProducerAndOperandElementReusingConsumerNotFused) {
@@ -756,5 +783,53 @@ TEST_F(InstructionFusionTest, IotaIntoVariadicReduction) {
       op::Reduce(op::Parameter(), op::Iota(), op::Constant(), op::Constant()));
 }
 
+TEST_F(InstructionFusionTest, InputReductionFusion) {
+  auto module = ParseAndReturnVerifiedModule(R"(
+    HloModule test_module
+    add.clone.13 {
+      x.27 = f32[] parameter(0)
+      y.27 = f32[] parameter(1)
+      ROOT add.1036 = f32[] add(x.27, y.27)
+    }
+    add.clone.14 {
+      x.28 = f32[] parameter(0)
+      y.28 = f32[] parameter(1)
+      ROOT add.1037 = f32[] add(x.28, y.28)
+    }
+    add {
+      x = bf16[] parameter(0)
+      convert.448 = f32[] convert(x)
+      y = bf16[] parameter(1)
+      convert.449 = f32[] convert(y)
+      add.597 = f32[] add(convert.448, convert.449)
+      ROOT convert.450 = bf16[] convert(add.597)
+    }
+    ENTRY FuseSmallReduction {
+      param_2.7 = bf16[8,16,64,2048]{3,2,1,0} parameter(2)
+      convert.1395 = f32[8,16,64,2048]{3,2,1,0} convert(param_2.7)
+      param_0.85 = bf16[8,16,64,2048]{3,2,1,0} parameter(0)
+      convert.1393 = f32[8,16,64,2048]{3,2,1,0} convert(param_0.85)
+      multiply.1652 = f32[8,16,64,2048]{3,2,1,0} multiply(convert.1395, convert.1393)
+      convert.1392 = bf16[8,16,64,2048]{3,2,1,0} convert(multiply.1652)
+      bitcast.15934 = bf16[128,64,2048]{2,1,0} bitcast(convert.1392)
+      convert.1391 = f32[128,64,2048]{2,1,0} convert(bitcast.15934)
+      param_1.15 = bf16[] parameter(1)
+      convert.1394 = f32[] convert(param_1.15)
+      reduce.462 = f32[128,64]{1,0} reduce(convert.1391, convert.1394), dimensions={2}, to_apply=add.clone.13
+      reduce.121 = f32[64]{0} reduce(reduce.462, convert.1394), dimensions={0}, to_apply=add.clone.14
+      ROOT convert.890 = bf16[64]{0} convert(reduce.121)
+    })")
+                    .value();
+
+  EXPECT_TRUE(duplicating_instruction_fusion_.Run(module.get()).value());
+
+  HloInstruction* fused_convert_fusion =
+      module->entry_computation()->root_instruction();
+
+  ASSERT_THAT(fused_convert_fusion, op::Fusion());
+  SCOPED_TRACE(module->ToString());
+  EXPECT_EQ(fused_convert_fusion->fusion_kind(),
+            HloInstruction::FusionKind::kInput);
+}
 }  // namespace gpu
 }  // namespace xla

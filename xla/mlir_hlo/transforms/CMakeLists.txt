@@ -48,10 +48,9 @@ add_mlir_library(MLIRBufferTransforms
   ChloOps
   GmlStBufferizableOpInterface
   GmlStDialect
-  MLIRGPUOps
+  MLIRGPUDialect
   MLIRHLOAnalysis
   MLIRIR
-  MLIRLinalgToLLVM
   MLIRMathTransforms
   MLIRPass
   MLIRReconcileUnrealizedCasts
@@ -78,7 +77,7 @@ add_mlir_library(MLIRHLOGPUTransforms
   LINK_LIBS PUBLIC
   GmlStPasses
   MLIRArithTransforms
-  MLIRGPUOps
+  MLIRGPUDialect
   MLIRHLOAnalysis
   MLIRIR
   MLIRMemRefTransforms

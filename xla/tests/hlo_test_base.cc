@@ -31,6 +31,7 @@ limitations under the License.
 #include "xla/service/hlo_runner_interface.h"
 #include "xla/service/hlo_runner_pjrt.h"
 #include "xla/service/platform_util.h"
+#include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/statusor.h"
 #include "xla/tests/filecheck.h"
@@ -57,11 +58,12 @@ bool ProgramShapesEqual(const ProgramShape& lhs, const ProgramShape& rhs) {
     return false;
   }
   for (int i = 0; i < lhs.parameters_size(); i++) {
-    if (!ShapeUtil::Equal(lhs.parameters(i), rhs.parameters(i))) {
+    if (!Shape::Equal().IgnoreElementSizeInLayout()(lhs.parameters(i),
+                                                    rhs.parameters(i))) {
       return false;
     }
   }
-  return ShapeUtil::Equal(lhs.result(), rhs.result());
+  return Shape::Equal().IgnoreElementSizeInLayout()(lhs.result(), rhs.result());
 }
 
 ProgramShape GetProgramShapeWithLayout(const HloModule& module) {
@@ -235,9 +237,11 @@ DebugOptions HloTestBase::GetDebugOptionsForTest() {
 void HloTestBase::RunAndFilecheckHloRewrite(
     absl::string_view hlo, HloPassInterface&& hlo_pass,
     std::optional<absl::string_view> expected,
-    std::function<void(HloModule*)> after_pass_checks) {
+    std::function<void(HloModule*)> after_pass_checks,
+    const HloModuleConfig* config) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
-                          ParseAndReturnVerifiedModule(hlo));
+                          config ? ParseAndReturnVerifiedModule(hlo, *config)
+                                 : ParseAndReturnVerifiedModule(hlo));
   TF_ASSERT_OK_AND_ASSIGN(bool changed, RunHloPass(&hlo_pass, module.get()));
   EXPECT_EQ(changed, expected.has_value()) << module->ToString();
   if (changed) {

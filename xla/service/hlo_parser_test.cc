@@ -132,7 +132,6 @@ ENTRY %constant_pred_array () -> pred[2,3] {
 
 )"
 },
-
 // s32 constant
 {
 "ConstantS32",
@@ -140,6 +139,17 @@ R"(HloModule constant_s32_module, entry_computation_layout={()->s32[]}
 
 ENTRY %constant_s32 () -> s32[] {
   ROOT %constant = s32[] constant(-42)
+}
+
+)"
+},
+// s32 constant with statistics
+{
+"ConstantS32WithStatistics",
+R"(HloModule constant_s32_module, entry_computation_layout={()->s32[]}
+
+ENTRY %constant_s32 () -> s32[] {
+  ROOT %constant = s32[] constant(-42), statistics={visualizing_index=1,stat-1=33,stat-2=44}
 }
 
 )"
@@ -208,6 +218,17 @@ R"(HloModule ConstantR1F8E4M3FNs_module, entry_computation_layout={()->f8e4m3fn[
 
 ENTRY %IsFiniteR1F32s.v2 () -> f8e4m3fn[3] {
   ROOT %constant = f8e4m3fn[3]{0} constant({nan, 7, -nan})
+}
+
+)"
+},
+// NaN constants for F8E4M3B11
+{
+"ConstantNonFiniteE4M3B11",
+R"(HloModule ConstantR1F8E4M3B11_module, entry_computation_layout={()->f8e4m3b11fnuz[2]{0}}
+
+ENTRY %IsFiniteR1F32s.v2 () -> f8e4m3b11fnuz[2] {
+  ROOT %constant = f8e4m3b11fnuz[2]{0} constant({-nan, 7})
 }
 
 )"
@@ -444,6 +465,18 @@ R"(HloModule custom_call, entry_computation_layout={()->f32[1,2,3]{0,2,1}}
 ENTRY %CustomCall () -> f32[1,2,3] {
   %constant = f32[1]{0} constant({12345})
   ROOT %custom-call = f32[1,2,3]{0,2,1} custom-call(f32[1]{0} %constant), custom_call_target="foo\"bar", backend_config="this string is opaque"
+}
+
+)"
+},
+// CustomCall with backend_config in curly braces rather than double quotes.
+{
+"CustomCallWithBackendConfigInCurlyBraces",
+R"(HloModule custom_call, entry_computation_layout={()->f32[1,2,3]{0,2,1}}
+
+ENTRY %CustomCall () -> f32[1,2,3] {
+  %constant = f32[1]{0} constant({12345})
+  ROOT %custom-call = f32[1,2,3]{0,2,1} custom-call(f32[1]{0} %constant), custom_call_target="foo\"bar", backend_config={key: "value"}
 }
 
 )"
@@ -1354,6 +1387,18 @@ ENTRY %test (p: f32[100]) -> u32[100] {
 
 )"
 },
+
+{
+"MetadataPreserveLayout",
+R"(HloModule test, entry_computation_layout={(f32[100]{0})->u32[100]{0}}
+
+ENTRY %test (p: f32[100]) -> u32[100] {
+  %p = f32[100]{0} parameter(0)
+  ROOT %root = u32[100]{0} bitcast-convert(f32[100]{0} %p), metadata={op_type="a" op_name="b" source_file="c" source_line=1 profile_type={1} deduplicated_name="d" preserve_layout=true}
+}
+
+)"
+},
 });
   // clang-format on
 }
@@ -1587,6 +1632,23 @@ compare {
 ENTRY Sort {
   x = f32[1024]{0} parameter(0)
   ROOT sorted = f32[1024]{0} sort(x), dimensions={0}, is_stable=true, to_apply=compare
+}
+
+)"
+},
+{
+"TopK",
+R"(HloModule topk, entry_computation_layout={(f32[10,10]{0,1})->(f32[10,2]{0,1}, s32[10,2]{0,1})}
+
+compare {
+  p.0.lhs = f32[] parameter(0)
+  p.0.rhs = f32[] parameter(1)
+  ROOT lt = pred[] compare(p.0.lhs, p.0.rhs), direction=LT
+}
+
+ENTRY TopK {
+  x = f32[10,10]{0,1} parameter(0)
+  ROOT topk = (f32[10,2]{0,1}, s32[10,2]{0,1}) topk(x), k=2, to_apply=compare
 }
 
 )"
@@ -2924,6 +2986,19 @@ ENTRY %NanPayload () -> f8e4m3fn[1] {
                   "tries to set NaN payload 0x1");
 }
 
+TEST_F(HloParserTest, InvalidNanPayloadF8e4m3b11fnuz) {
+  const std::string original =
+      R"(HloModule InvalidNanPayloadF8e4m3b11fnuz_module, entry_computation_layout={()->f8e4m3b11fnuz[1]{0}}
+
+ENTRY %NanPayload () -> f8e4m3b11fnuz[1] {
+  ROOT %constant = f8e4m3b11fnuz[1]{0} constant({nan(0x1)})
+}
+
+)";
+  ExpectHasSubstr(ParseAndReturnUnverifiedModule(original).status().message(),
+                  "tries to set NaN payload 0x1");
+}
+
 TEST_F(HloParserTest, AttributesAnyOrder) {
   const std::string original = R"(HloModule any_order_module
 
@@ -3409,15 +3484,9 @@ TEST_F(HloParserTest, ParseShardingPartialReplication) {
   const std::string original = "{devices=[2,2]0,1,2,3 last_tile_dim_replicate}";
   TF_ASSERT_OK_AND_ASSIGN(HloSharding sharding, ParseSharding(original));
   EXPECT_EQ(sharding.ToString(), original);
-  Array<int64_t> group_tiling({2});
-  group_tiling(0) = 0;
-  group_tiling(1) = 1;
-  std::vector<int64_t> group0_members({0, 1});
-  std::vector<int64_t> group1_members({2, 3});
-  EXPECT_EQ(
-      HloSharding::PartialTile(group_tiling, {group0_members, group1_members})
-          .ToString(),
-      original);
+  Array<int64_t> tiling_last_dim_replicated({{0, 1}, {2, 3}});
+  EXPECT_EQ(HloSharding::PartialTile(tiling_last_dim_replicated).ToString(),
+            original);
 }
 
 TEST_F(HloParserTest, ParseShardingSubGroup) {
@@ -3428,6 +3497,50 @@ TEST_F(HloParserTest, ParseShardingSubGroup) {
   EXPECT_EQ(sharding.ToString(), original);
   Array<int64_t> tile_assignment({2, 2, 2, 2});
   tile_assignment.FillIota(0);
+  std::vector<OpSharding::Type> subgroup_types = {OpSharding::MANUAL,
+                                                  OpSharding::REPLICATED};
+  EXPECT_EQ(HloSharding::Subgroup(tile_assignment, subgroup_types).ToString(),
+            original);
+}
+
+TEST_F(HloParserTest, ParseTrivialIotaShardingPartialReplication) {
+  const std::string original = "{devices=[2,2]<=[4] last_tile_dim_replicate}";
+  TF_ASSERT_OK_AND_ASSIGN(HloSharding sharding, ParseSharding(original));
+  EXPECT_EQ(sharding.ToString(), original);
+  TileAssignment tiling_last_dim_replicated((absl::Span<const int64_t>){2, 2});
+  EXPECT_EQ(HloSharding::PartialTile(tiling_last_dim_replicated).ToString(),
+            original);
+}
+
+TEST_F(HloParserTest, ParseTrivialIotaShardingSubGroup) {
+  const std::string original =
+      "{devices=[2,2,2,2]<=[16] last_tile_dims={manual, replicated}}";
+  TF_ASSERT_OK_AND_ASSIGN(HloSharding sharding, ParseSharding(original));
+  EXPECT_EQ(sharding.ToString(), original);
+  TileAssignment tile_assignment({2, 2, 2, 2});
+  std::vector<OpSharding::Type> subgroup_types = {OpSharding::MANUAL,
+                                                  OpSharding::REPLICATED};
+  EXPECT_EQ(HloSharding::Subgroup(tile_assignment, subgroup_types).ToString(),
+            original);
+}
+
+TEST_F(HloParserTest, ParseTransposedIotaShardingPartialReplication) {
+  const std::string original =
+      "{devices=[2,2]<=[2,2]T(1,0) last_tile_dim_replicate}";
+  TF_ASSERT_OK_AND_ASSIGN(HloSharding sharding, ParseSharding(original));
+  EXPECT_EQ(sharding.ToString(), original);
+  TileAssignment tiling_last_dim_replicated({2, 2}, {2, 2}, {1, 0});
+  EXPECT_EQ(HloSharding::PartialTile(tiling_last_dim_replicated).ToString(),
+            original);
+}
+
+TEST_F(HloParserTest, ParseTransposedIotaShardingSubGroup) {
+  const std::string original =
+      "{devices=[2,2,2,2]<=[2,2,4]T(2,1,0) last_tile_dims={manual, "
+      "replicated}}";
+  TF_ASSERT_OK_AND_ASSIGN(HloSharding sharding, ParseSharding(original));
+  EXPECT_EQ(sharding.ToString(), original);
+  TileAssignment tile_assignment({2, 2, 2, 2}, {2, 2, 4}, {2, 1, 0});
   std::vector<OpSharding::Type> subgroup_types = {OpSharding::MANUAL,
                                                   OpSharding::REPLICATED};
   EXPECT_EQ(HloSharding::Subgroup(tile_assignment, subgroup_types).ToString(),
@@ -3941,12 +4054,23 @@ TEST_F(HloParserTest, ParseShapeStringWithTilingLayout) {
                   "Dimensions size is 3, but minor to major size is 1.");
 }
 
+TEST_F(HloParserTest, ParseShapeStringWithElementSizeInBits) {
+  // Tile, element size, and memory space.
+  std::string shape_string = "s4[123,456]{1,0:T(2,128)E(4)}";
+  TF_ASSERT_OK_AND_ASSIGN(Shape actual, ParseShape(shape_string));
+  Shape expected = ShapeUtil::MakeShapeWithDenseLayout(S4, {123, 456}, {1, 0},
+                                                       {Tile({2, 128})}, 4);
+  EXPECT_EQ(expected, actual)
+      << "expected: " << ShapeUtil::HumanStringWithLayout(expected)
+      << "actual:   " << ShapeUtil::HumanStringWithLayout(actual);
+}
+
 TEST_F(HloParserTest, ParseShapeStringWithMemorySpaceLayout) {
   // Tile, element size, and memory space.
   std::string shape_string = "pred[123,456]{1,0:T(2,128)S(3)}";
   TF_ASSERT_OK_AND_ASSIGN(Shape actual, ParseShape(shape_string));
   Shape expected = ShapeUtil::MakeShapeWithDenseLayout(PRED, {123, 456}, {1, 0},
-                                                       {Tile({2, 128})}, 3);
+                                                       {Tile({2, 128})}, 0, 3);
   EXPECT_EQ(expected, actual)
       << "expected: " << ShapeUtil::HumanStringWithLayout(expected)
       << "actual:   " << ShapeUtil::HumanStringWithLayout(actual);
@@ -3955,7 +4079,7 @@ TEST_F(HloParserTest, ParseShapeStringWithMemorySpaceLayout) {
   shape_string = "pred[123,456]{1,0:S(3)}";
   TF_ASSERT_OK_AND_ASSIGN(actual, ParseShape(shape_string));
   expected =
-      ShapeUtil::MakeShapeWithDenseLayout(PRED, {123, 456}, {1, 0}, {}, 3);
+      ShapeUtil::MakeShapeWithDenseLayout(PRED, {123, 456}, {1, 0}, {}, 0, 3);
   EXPECT_EQ(expected, actual)
       << "expected: " << ShapeUtil::HumanStringWithLayout(expected)
       << "actual:   " << ShapeUtil::HumanStringWithLayout(actual);
@@ -3964,7 +4088,7 @@ TEST_F(HloParserTest, ParseShapeStringWithMemorySpaceLayout) {
   shape_string = "pred[123,456]{1,0:S(3)}";
   TF_ASSERT_OK_AND_ASSIGN(actual, ParseShape(shape_string));
   expected =
-      ShapeUtil::MakeShapeWithDenseLayout(PRED, {123, 456}, {1, 0}, {}, 3);
+      ShapeUtil::MakeShapeWithDenseLayout(PRED, {123, 456}, {1, 0}, {}, 0, 3);
   EXPECT_EQ(expected, actual)
       << "expected: " << ShapeUtil::HumanStringWithLayout(expected)
       << "actual:   " << ShapeUtil::HumanStringWithLayout(actual);
@@ -4044,6 +4168,20 @@ TEST_F(HloParserTest, NegativeParameterNumber) {
   ASSERT_FALSE(result.status().ok());
   EXPECT_THAT(result.status().message(),
               HasSubstr("parameter number must be >= 0"));
+}
+
+TEST_F(HloParserTest, DuplicateParameterNumberIsDetected) {
+  const std::string kHloString = R"(
+  ENTRY e {
+    a = s8[] parameter(0)
+    b = s8[] parameter(0)
+    ROOT a = s8[] add(a, b)
+  }
+  )";
+  auto result = ParseAndReturnUnverifiedModule(kHloString);
+  ASSERT_FALSE(result.status().ok());
+  EXPECT_THAT(result.status().message(),
+              HasSubstr("Duplicate parameter number 0"));
 }
 
 TEST_F(HloParserTest, WrongNumberOfParameterLeafBuffersInReplication) {
@@ -4375,6 +4513,15 @@ test {
       Layout({1, 0, 2, 3}));
 }
 
+TEST_F(HloParserTest, ParseComputationNameClosingBrace) {
+  const std::string original = R"(
+test {
+  ROOT root =  f32[1,64,10,128]{1,0,2,3} parameter(0)
+} // test
+)";
+  EXPECT_TRUE(ParseAndReturnUnverifiedModule(original).ok());
+}
+
 TEST_F(HloParserTest, ParseSingleEntryComputation) {
   const std::string original = R"(
 ENTRY test {
@@ -4448,6 +4595,23 @@ comp2 {
   EXPECT_EQ(
       module->entry_computation()->ComputeProgramShape().result().layout(),
       Layout({1, 0, 2, 3}));
+}
+
+TEST_F(HloParserTest, LexesAsJsonDict) {
+  EXPECT_TRUE(LexesAsJsonDict("{}"));
+  EXPECT_TRUE(LexesAsJsonDict("{abc: 123}"));
+  EXPECT_TRUE(LexesAsJsonDict("{{abc: 123}, {{{d}}}}"));
+  EXPECT_TRUE(LexesAsJsonDict(R"({"}"})"));
+  EXPECT_TRUE(LexesAsJsonDict(R"({"\"}"})"));
+  EXPECT_TRUE(LexesAsJsonDict(R"({"\"{"})"));
+  EXPECT_FALSE(LexesAsJsonDict(""));
+  EXPECT_FALSE(LexesAsJsonDict("{"));
+  EXPECT_FALSE(LexesAsJsonDict("}"));
+  EXPECT_FALSE(LexesAsJsonDict("{{}"));
+  EXPECT_FALSE(LexesAsJsonDict("{}}"));
+  EXPECT_FALSE(LexesAsJsonDict("{}a"));
+  EXPECT_FALSE(LexesAsJsonDict("a{}"));
+  EXPECT_FALSE(LexesAsJsonDict("{{{{}}}"));
 }
 
 }  // namespace

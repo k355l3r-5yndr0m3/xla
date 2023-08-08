@@ -6,10 +6,6 @@ load(
 )
 load("//third_party/compute_library:build_defs.bzl", "if_enable_acl")
 load("//xla:xla.bzl", "xla_cc_test", "xla_py_proto_library")
-load(
-    "@tsl//tsl/platform/default:cuda_build_defs.bzl",
-    "if_cuda_is_configured",
-)
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -29,6 +25,7 @@ package_group(
         "//third_party/mlir_edge/model_curriculum/...",
         "//third_party/py/jax/...",
         "//third_party/py/t5x/...",
+        "//third_party/py/tpu_graphs/...",
         "//tensorflow/compiler/...",
         "//tensorflow/python/tpu/...",
     ],
@@ -119,8 +116,6 @@ xla_cc_test(
     deps = [
         ":bit_cast",
         ":test",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:test_main",
     ],
 )
@@ -217,7 +212,6 @@ xla_cc_test(
     deps = [
         ":test",
         ":types",
-        "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:test_main",
     ],
 )
@@ -229,7 +223,6 @@ cc_library(
     visibility = [":friends"],
     deps = [
         ":status",
-        ":xla_cc_grpc_proto",
         ":xla_data_proto_cc",
         ":xla_proto_cc",
     ],
@@ -261,7 +254,6 @@ xla_cc_test(
         ":test",
         ":test_helpers",
         "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:test_main",
     ],
 )
@@ -376,7 +368,6 @@ cc_library(
         ":util",
         "@com_google_absl//absl/hash",
         "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:protobuf",
     ],
@@ -498,7 +489,6 @@ xla_cc_test(
         ":types",
         ":util",
         ":xla_data_proto_cc",
-        "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:test_main",
     ],
 )
@@ -558,6 +548,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
+        "@eigen_archive//:eigen3",
         "@tsl//tsl/lib/core:bitmap",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:float8",
@@ -585,7 +576,6 @@ xla_cc_test(
         "@com_google_absl//absl/strings",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:float8",
-        "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_benchmark",
         "@tsl//tsl/platform:test_main",
     ],
@@ -654,7 +644,6 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:status",
     ],
 )
 
@@ -680,7 +669,6 @@ cc_library(
         "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -878,8 +866,6 @@ xla_cc_test(
         ":types",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
     ],
 )
@@ -910,8 +896,6 @@ xla_cc_test(
         ":shape_util",
         ":test",
         ":xla_data_proto_cc",
-        "@com_google_absl//absl/memory",
-        "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_benchmark",
         "@tsl//tsl/platform:test_main",
     ],
@@ -995,11 +979,9 @@ xla_cc_test(
         ":literal",
         ":reference_util",
         ":test",
-        ":util",
         ":xla_data_proto_cc",
         "//xla/client:padding",
         "//xla/tests:literal_test_util",
-        "@com_google_absl//absl/memory",
         "@tsl//tsl/platform:test_main",
     ],
 )
@@ -1079,11 +1061,8 @@ xla_cc_test(
     deps =
         [
             ":xla_proto_cc",
-            "//xla/hlo/ir:hlo",
             "@com_google_absl//absl/container:flat_hash_map",
             "@com_google_absl//absl/strings",
-            "@com_google_absl//absl/strings:str_format",
-            "@tsl//tsl/platform:logging",
             "@tsl//tsl/platform:test",
         ],
 )
@@ -1132,7 +1111,7 @@ tf_proto_library(
     srcs = ["autotune_results.proto"],
     cc_api_version = 2,
     protodeps = [
-        "@tsl//tsl/protobuf:autotuning_proto",
+        ":autotuning_proto",
     ],
     visibility = ["//visibility:public"],
 )
@@ -1146,21 +1125,11 @@ xla_py_proto_library(
     ],
 )
 
-cc_library(
-    name = "autotune_serialize",
-    srcs = if_cuda_is_configured(["autotune_serialize.cc"]),
-    hdrs = if_cuda_is_configured(["autotune_serialize.h"]),
-    # TODO(aminim): There appears to be an in-progress refactoring in TF/XLA to
-    # mark rules as compatible_with GCE.  The rules that this depends on are
-    # not yet marked as compatible, so this one can't be either (yet).
-    compatible_with = [],
-    visibility = ["//visibility:public"],
-    deps = if_cuda_is_configured([
-        ":autotune_results_proto_cc",
-        ":statusor",
-        "//xla/service/gpu:gemm_algorithm_picker",
-        "//xla/service/gpu:gpu_conv_algorithm_picker",
-    ]),
+tf_proto_library(
+    name = "autotuning_proto",
+    srcs = ["autotuning.proto"],
+    make_default_target_header_only = True,
+    protodeps = ["@tsl//tsl/protobuf:dnn_proto"],
 )
 
 cc_library(

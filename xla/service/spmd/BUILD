@@ -35,6 +35,7 @@ cc_library(
     ],
     deps = [
         "//xla:comparison_util",
+        "//xla:literal",
         "//xla:literal_util",
         "//xla:protobuf_util",
         "//xla:shape_util",
@@ -46,6 +47,7 @@ cc_library(
         "//xla/client/lib:comparators",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/ir:hlo_reachability",
+        "//xla/hlo/utils:hlo_query",
         "//xla/hlo/utils:hlo_sharding_util",
         "//xla/service:call_graph",
         "//xla/service:custom_call_sharding_helper",
@@ -56,7 +58,6 @@ cc_library(
         "//xla/service:hlo_lexer",
         "//xla/service:hlo_pass",
         "//xla/service:hlo_pass_pipeline",
-        "//xla/service:hlo_query",
         "//xla/service:pattern_matcher",
         "//xla/service:shape_inference",
         "//xla/service:sharding_propagation",
@@ -80,20 +81,18 @@ xla_cc_test(
     srcs = ["spmd_partitioner_test.cc"],
     deps = [
         ":spmd_partitioner",
+        ":spmd_prepare",
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_matchers",
         "//xla/hlo/utils:hlo_sharding_util",
-        "//xla/service:hlo_parser",
         "//xla/service:hlo_pass_pipeline",
         "//xla/service:hlo_verifier",
-        "//xla/service:sharding_propagation",
+        "//xla/service:sharding_format_picker",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/algorithm:container",
-        "@tsl//tsl/lib/core:status_test_util",
-        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -121,8 +120,8 @@ cc_library(
     hdrs = ["canonicalize_all_gather_for_cse.h"],
     deps = [
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/utils:hlo_query",
         "//xla/service:hlo_pass",
-        "//xla/service:hlo_query",
         "@com_google_absl//absl/types:span",
     ],
 )
@@ -153,6 +152,36 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_pass",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
+
+xla_cc_test(
+    name = "spmd_prepare_test",
+    srcs = ["spmd_prepare_test.cc"],
+    deps = [
+        ":spmd_prepare",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/utils:hlo_matchers",
+        "//xla/service:hlo_parser",
+        "//xla/service:hlo_pass_pipeline",
+        "//xla/service:hlo_verifier",
+        "//xla/tests:hlo_test_base",
+        "//xla/tests:xla_internal_test_main",
+        "@tsl//tsl/lib/core:status_test_util",
+    ],
+)
+
+cc_library(
+    name = "spmd_prepare",
+    srcs = ["spmd_prepare.cc"],
+    hdrs = ["spmd_prepare.h"],
+    deps = [
+        ":spmd_partitioner",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/utils:hlo_sharding_util",
+        "//xla/service:hlo_pass",
+        "//xla/service:pattern_matcher",
         "@tsl//tsl/platform:statusor",
     ],
 )

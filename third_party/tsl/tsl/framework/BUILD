@@ -270,6 +270,7 @@ cc_library(
         "//tsl/platform:str_util",
         "//tsl/util:device_name_utils",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
     ],
 )
@@ -429,6 +430,7 @@ tsl_cc_test(
         "//tsl/lib/core:status_test_util",
         "//tsl/platform:status_matchers",
         "//tsl/platform:test_main",
+        "//tsl/protobuf:error_codes_proto_impl_cc",
         "//tsl/util:device_name_utils",
     ],
 )

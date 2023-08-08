@@ -1,9 +1,10 @@
 load("@tsl//tsl:tsl.default.bzl", "filegroup")
 load("//xla:glob_lit_test.bzl", "glob_lit_tests")
 
-package(licenses = ["notice"])
+# copybara:uncomment package(default_applicable_licenses = ["//tensorflow:license"])
 
 glob_lit_tests(
+    name = "all_tests",
     data = [":test_utilities"],
     driver = "//xla:run_lit.sh",
     test_file_exts = [

@@ -33,14 +33,12 @@ cc_library(
         "//xla/python/tpu_driver:recording_tpu_driver",
         "//xla/python/tpu_driver:tpu_driver_proto_cc",
         "//xla/service:computation_placer",
-        "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
         "@llvm-project//mlir:IR",
         "@tsl//tsl/framework:allocator",
-        "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/profiler/lib:traceme",
     ],
@@ -70,7 +68,7 @@ tsl_pybind_extension(
         "@llvm-project//mlir:IR",
         "@local_config_python//:python_headers",  # buildcleaner: keep
         "@pybind11",
-        "@tsl//tsl/python/lib/core:bfloat16_lib",
+        "@tsl//tsl/python/lib/core:ml_dtypes_lib",
     ],
 )
 

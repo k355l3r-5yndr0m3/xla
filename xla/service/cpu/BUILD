@@ -74,13 +74,25 @@ filegroup(
         "runtime_single_threaded_conv2d.cc",
         "runtime_single_threaded_conv3d.cc",
         "runtime_single_threaded_fft.cc",
-        "runtime_single_threaded_matmul.cc",
+        "runtime_single_threaded_matmul_c128.cc",
+        "runtime_single_threaded_matmul_c64.cc",
+        "runtime_single_threaded_matmul_common.h",
+        "runtime_single_threaded_matmul_f16.cc",
+        "runtime_single_threaded_matmul_f32.cc",
+        "runtime_single_threaded_matmul_f64.cc",
+        "runtime_single_threaded_matmul_s32.cc",
         "runtime_topk.cc",
         # Multi-threaded support.
         "runtime_conv2d.cc",
         "runtime_conv3d.cc",
         "runtime_fft.cc",
-        "runtime_matmul.cc",
+        "runtime_matmul_c128.cc",
+        "runtime_matmul_c64.cc",
+        "runtime_matmul_common.h",
+        "runtime_matmul_f16.cc",
+        "runtime_matmul_f32.cc",
+        "runtime_matmul_f64.cc",
+        "runtime_matmul_s32.cc",
         "runtime_fork_join.cc",
     ],
     visibility = [":friends"],
@@ -89,6 +101,8 @@ filegroup(
 filegroup(
     name = "runtime_hdrs",
     srcs = [
+        # XLA Runtime support.
+        "buffer_desc.h",
         # Single-threaded support.
         "runtime_custom_call_status.h",
         "runtime_conv_impl.h",
@@ -109,20 +123,6 @@ filegroup(
         "runtime_lightweight_check.h",
         "runtime_matmul.h",
     ],
-    visibility = [":friends"],
-)
-
-filegroup(
-    name = "xla_runtime_runner_hdrs",
-    srcs = [
-        "buffer_desc.h",
-    ],
-    visibility = [":friends"],
-)
-
-filegroup(
-    name = "xla_runtime_runner_srcs",
-    srcs = [],
     visibility = [":friends"],
 )
 
@@ -188,13 +188,14 @@ cc_library(
     hdrs = ["buffer_info_util.h"],
     deps = [
         "//xla:cpu_function_runtime",
+        "//xla/hlo/ir:hlo",
         "//xla/service:buffer_assignment",
         "@com_google_absl//absl/types:span",
     ],
 )
 
 cc_library(
-    name = "cpu_compiler",
+    name = "cpu_compiler_pure",
     srcs = ["cpu_compiler.cc"],
     hdrs = ["cpu_compiler.h"],
     deps = [
@@ -225,10 +226,11 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/mlir/framework/ir:xla_framework",
-        "//xla/mlir/framework/transforms:passes",
+        "//xla/mlir/runtime/ir:rt",
         "//xla/mlir/runtime/transforms:calling_convention",
         "//xla/mlir/runtime/transforms:compilation_pipeline_cpu",
         "//xla/mlir/runtime/transforms:compiler",
+        "//xla/mlir/runtime/transforms:jit_compiler",
         "//xla/mlir/tools/mlir_replay/public:compiler_trace_instrumentation",
         "//xla/mlir_hlo",
         "//xla/mlir_hlo:all_passes",
@@ -312,13 +314,13 @@ cc_library(
         "//xla/service/cpu/runtime:custom_call",
         "//xla/service/cpu/runtime:fft_call",
         "//xla/service/cpu/runtime:retain",
-        "//xla/service/cpu/runtime:rng",
+        "//xla/service/cpu/runtime:rng_call",
         "//xla/service/cpu/runtime:xfeed",
         "//xla/service/llvm_ir:llvm_command_line_options",
         "//xla/service/llvm_ir:llvm_util",
         "//xla/service/spmd:stateful_rng_spmd_partitioner",
         "//xla/stream_executor",
-        "//xla/stream_executor/host:host_platform",
+        "//xla/stream_executor:stream_executor_pimpl",  # fixdeps: keep
         "//xla/stream_executor/host:host_platform_id",
         "//xla/translate/hlo_to_mhlo:hlo_to_mlir_hlo",
         "//xla/translate/hlo_to_mhlo:hlo_utils",
@@ -375,6 +377,30 @@ cc_library(
     }) + if_llvm_system_z_available([
         "@llvm-project//llvm:SystemZCodeGen",  # fixdeps: keep
     ]),
+)
+
+cc_library(
+    # The old target name will still be used so that dependencies won't break.
+    # In the future, dependencies should be cleaned up and relinked to the above
+    # target if registration is not necesary.
+    name = "cpu_compiler",
+    srcs = ["cpu_compiler_registerer.cc"],
+    hdrs = ["cpu_compiler.h"],
+    deps = [
+        "cpu_compiler_pure",
+        ":executable_proto_cc",
+        ":target_machine_features",
+        "//xla:cpu_function_runtime",
+        "//xla:statusor",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:compiler",
+        "//xla/service:executable",
+        "//xla/service:llvm_compiler",
+        "//xla/stream_executor",
+        "//xla/stream_executor:stream_executor_pimpl",  # fixdeps: keep
+        "//xla/stream_executor/host:host_platform_id",
+        "@llvm-project//llvm:Target",
+    ],
     alwayslink = True,  # Contains compiler registration
 )
 
@@ -407,26 +433,27 @@ cc_library(
     deps = [
         "//xla:status",
         "//xla/mlir/backends/cpu/transforms:passes",
-        "//xla/mlir/framework/transforms:passes",
         "//xla/mlir/runtime/transforms:compiler",
         "//xla/mlir_hlo:all_passes",
         "//xla/mlir_hlo:gml_st_bufferizable_op_interface",
         "//xla/mlir_hlo:mhlo_passes",
+        "//xla/mlir_hlo:thlo_bufferizable_op_interface",
         "//xla/mlir_hlo:transforms_passes",
         "//xla/runtime:compiler",
         "@llvm-project//mlir:ArithTransforms",
         "@llvm-project//mlir:BufferizationToMemRef",
         "@llvm-project//mlir:BufferizationTransforms",
         "@llvm-project//mlir:ComplexToStandard",
-        "@llvm-project//mlir:ConversionPasses",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:FuncTransforms",
         "@llvm-project//mlir:GPUDialect",
+        "@llvm-project//mlir:GPUToNVVMTransforms",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:LinalgTransforms",
         "@llvm-project//mlir:MemRefTransforms",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:ReconcileUnrealizedCasts",
+        "@llvm-project//mlir:SCFToControlFlow",
         "@llvm-project//mlir:SCFTransforms",
         "@llvm-project//mlir:ShapeToStandard",
         "@llvm-project//mlir:ShapeTransforms",
@@ -434,6 +461,7 @@ cc_library(
         "@llvm-project//mlir:TensorToLinalg",
         "@llvm-project//mlir:TensorTransforms",
         "@llvm-project//mlir:Transforms",
+        "@llvm-project//mlir:VectorToLLVM",
         "@llvm-project//mlir:VectorToSCF",
         "@llvm-project//mlir:VectorTransforms",
         "@tsl//tsl/platform:errors",
@@ -783,6 +811,7 @@ cc_library(
         "//xla:statusor",
         "//xla:types",
         "//xla:util",
+        "//xla/runtime:execution_engine",
         "//xla/service:llvm_compiler",
         "//xla/service/llvm_ir:llvm_util",
         "@com_google_absl//absl/memory",
@@ -953,7 +982,15 @@ cc_library(
 
 cc_library(
     name = "runtime_matmul",
-    srcs = ["runtime_matmul.cc"],
+    srcs = [
+        "runtime_matmul_c128.cc",
+        "runtime_matmul_c64.cc",
+        "runtime_matmul_common.h",
+        "runtime_matmul_f16.cc",
+        "runtime_matmul_f32.cc",
+        "runtime_matmul_f64.cc",
+        "runtime_matmul_s32.cc",
+    ],
     hdrs = ["runtime_matmul.h"],
     copts = runtime_copts(),
     visibility = ["//visibility:public"],
@@ -1075,7 +1112,15 @@ cc_library(
 
 cc_library(
     name = "runtime_single_threaded_matmul_impl",
-    srcs = ["runtime_single_threaded_matmul.cc"],
+    srcs = [
+        "runtime_single_threaded_matmul_c128.cc",
+        "runtime_single_threaded_matmul_c64.cc",
+        "runtime_single_threaded_matmul_common.h",
+        "runtime_single_threaded_matmul_f16.cc",
+        "runtime_single_threaded_matmul_f32.cc",
+        "runtime_single_threaded_matmul_f64.cc",
+        "runtime_single_threaded_matmul_s32.cc",
+    ],
     hdrs = ["runtime_single_threaded_matmul.h"],
     compatible_with = get_compatible_with_portable(),
     copts = runtime_copts(),

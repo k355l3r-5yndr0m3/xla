@@ -1,7 +1,7 @@
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library")
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_binary", "cc_library")
 load("//xla:xla.bzl", "xla_cc_test")
-load("@tsl//tsl:tsl.default.bzl", "get_compatible_with_cloud")
+load("@tsl//tsl:tsl.default.bzl", "get_compatible_with_portable")
 load("@bazel_skylib//rules:build_test.bzl", "build_test")
 
 package(
@@ -22,6 +22,7 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/mlir_hlo",
         "//xla/mlir_hlo:lhlo_gpu",
+        "//xla/service:hlo_parser",
         "//xla/service:hlo_proto_cc",
         "//xla/stream_executor:dnn",
         "@llvm-project//mlir:IR",
@@ -46,8 +47,20 @@ cc_library(
     srcs = ["location_exporter.cc"],
     hdrs = ["location_exporter.h"],
     deps = [
+        ":stack_frame_index_builder",
         "//xla:xla_data_proto_cc",
         "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:IR",
+    ],
+)
+
+cc_library(
+    name = "stack_frame_index_builder",
+    srcs = ["stack_frame_index_builder.cc"],
+    hdrs = ["stack_frame_index_builder.h"],
+    deps = [
+        "//xla/service:hlo_proto_cc",
+        "@com_google_absl//absl/container:flat_hash_map",
         "@llvm-project//mlir:IR",
     ],
 )
@@ -63,6 +76,8 @@ cc_library(
         ":attribute_exporter",
         ":layout_util",
         ":location_exporter",
+        ":operator_writer_inc",
+        ":stack_frame_index_builder",
         ":type_to_shape",
         "//xla:comparison_util",
         "//xla:literal",
@@ -72,6 +87,8 @@ cc_library(
         "//xla:status_macros",
         "//xla:xla_data_proto_cc",
         "//xla/client:xla_builder",
+        "//xla/client/lib:approx_topk",
+        "//xla/client/lib:approx_topk_shape",
         "//xla/client/lib:matrix",
         "//xla/client/lib:quantize",
         "//xla/client/lib:slicing",
@@ -80,10 +97,10 @@ cc_library(
         "//xla/mlir_hlo",
         "//xla/mlir_hlo:mhlo_passes",
         "//xla/service:hlo_parser",
+        "//xla/service:hlo_proto_cc",
         "//xla/service/gpu:backend_configs_cc",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
-        "@llvm-project//mlir:Analysis",
         "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
@@ -93,7 +110,6 @@ cc_library(
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:TensorDialect",
         "@llvm-project//mlir:TransformUtils",
-        "@llvm-project//mlir:Transforms",
         "@stablehlo//:stablehlo_ops",
         "@tsl//tsl/platform:float8",
         "@tsl//tsl/platform:statusor",
@@ -113,14 +129,13 @@ cc_binary(
     deps = [
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:TableGen",
-        "@llvm-project//mlir:Support",
         "@llvm-project//mlir:TableGen",
     ],
 )
 
 gentbl_cc_library(
     name = "operator_writer_inc",
-    compatible_with = get_compatible_with_cloud(),
+    compatible_with = get_compatible_with_portable(),
     tbl_outs = [([], "operator_writers.inc")],
     tblgen = ":operator_writer_gen",
     td_file = "//xla/mlir_hlo:mhlo/IR/hlo_ops.td",
@@ -171,6 +186,7 @@ cc_library(
         "//xla:statusor",
         "//xla:xla_data_proto_cc",
         "//xla/mlir_hlo",
+        "//xla/translate/hlo_to_mhlo:hlo_utils",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:SparseTensorDialect",
