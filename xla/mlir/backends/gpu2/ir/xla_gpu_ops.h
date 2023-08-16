@@ -1,4 +1,4 @@
-/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2023 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,15 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_TSL_PLATFORM_DEFAULT_CORD_H_
-#define TENSORFLOW_TSL_PLATFORM_DEFAULT_CORD_H_
+#ifndef XLA_MLIR_BACKENDS_GPU2_IR_XLA_GPU_OPS_H_
+#define XLA_MLIR_BACKENDS_GPU2_IR_XLA_GPU_OPS_H_
 
-// It seems CORD doesn't work well with CUDA <= 10.2
-#if !defined(__CUDACC__) || ((defined(__CUDACC__) && CUDA_VERSION > 10020))
+#include "mlir/IR/Builders.h"  // from @llvm-project  // IWYU pragma: keep
+#include "mlir/IR/OpImplementation.h"  // from @llvm-project  // IWYU pragma: keep
+#include "mlir/IR/OperationSupport.h"  // from @llvm-project  // IWYU pragma: keep
+#include "xla/mlir/backends/gpu2/ir/xla_gpu_dialect.h"
 
-#include "absl/strings/cord.h"
-#define TF_CORD_SUPPORT 1
+#define GET_OP_CLASSES
+#include "xla/mlir/backends/gpu2/ir/xla_gpu_ops.h.inc"
 
-#endif  // __CUDACC__
-
-#endif  // TENSORFLOW_TSL_PLATFORM_DEFAULT_CORD_H_
+#endif  // XLA_MLIR_BACKENDS_GPU2_IR_XLA_GPU_OPS_H_

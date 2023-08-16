@@ -4,6 +4,7 @@ cc_library(
     hdrs = ["in_place_dynamic_update_slice.h"],
     deps = [
         ":fusion_emitter",
+        "//xla/service/gpu:hlo_fusion_analysis",
         "//xla/service/gpu:ir_emission_utils",
         "//xla/service/gpu:launch_dimensions",
         "//xla/service/llvm_ir:dynamic_update_slice_util",
@@ -66,12 +67,16 @@ cc_library(
         ":loop",
         ":reduction",
         ":transpose",
+        "//xla:shape_util",
         "//xla/hlo/ir:hlo",
         "//xla/mlir_hlo:lhlo",
+        "//xla/service:buffer_assignment",
         "//xla/service:elemental_ir_emitter",
         "//xla/service/gpu:hlo_fusion_analysis",
         "//xla/service/gpu:ir_emission_utils",
         "//xla/service/gpu:ir_emitter_context",
+        "@com_google_absl//absl/types:span",
+        "@llvm-project//mlir:IR",
     ],
 )
 
@@ -166,6 +171,7 @@ cc_library(
         "@llvm-project//mlir:Support",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -181,8 +187,8 @@ cc_library(
         "//xla/mlir_hlo:lhlo",
         "//xla/service:elemental_ir_emitter",
         "//xla/service/gpu:hlo_fusion_analysis",
+        "//xla/service/gpu:ir_emission_utils",
         "//xla/service/gpu:ir_emitter_context",
-        "//xla/service/gpu:parallel_loop_emitter",
         "//xla/service/gpu:target_util",
         "//xla/service/llvm_ir:fused_ir_emitter",
         "//xla/service/llvm_ir:ir_array",
