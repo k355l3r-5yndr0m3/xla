@@ -285,15 +285,14 @@ PJRT_Error* PJRT_LoadedExecutable_Execute(
 }
 
 
-
-
-
-
-
+PJRT_Error* PJRT_Plugin_Initialize(PJRT_Plugin_Initialize_Args *args) {
+    return NULL;
+}
 
 constexpr static PJRT_Api CreatePjrtApi() {
     PJRT_Api api = pjrt::CreatePjrtApi(pjrt::plugin::PJRT_Client_Create,
-                                       pjrt::plugin::PJRT_CpuDeviceTopology_Create);
+                                       pjrt::plugin::PJRT_CpuDeviceTopology_Create, 
+                                       pjrt::plugin::PJRT_Plugin_Initialize);
     // api.PJRT_LoadedExecutable_Execute = pjrt::plugin::PJRT_LoadedExecutable_Execute;
     return api;
 }
@@ -307,21 +306,21 @@ constexpr PJRT_Api pjrt_api = pjrt::plugin::CreatePjrtApi();
 const PJRT_Api* GetPjrtApi() { return &pjrt_api; }
 
 
-const void *SerializeCompileOptions(size_t *compile_options_size) {
-    xla::CompileOptions options;
-    
-    auto result = options.ToProto();
-    if (!result.ok())
-        return NULL;
-
-    auto proto = result.value();
-    size_t size = proto.ByteSizeLong();
-    void *buffer = malloc(size);
-    if (!proto.SerializeToArray(buffer, size)) {
-        free(buffer);
-        return NULL;
-    }
-    
-    *compile_options_size = size;
-    return buffer;
-}
+// const void *SerializeCompileOptions(size_t *compile_options_size) {
+//     xla::CompileOptions options;
+//     
+//     auto result = options.ToProto();
+//     if (!result.ok())
+//         return NULL;
+// 
+//     auto proto = result.value();
+//     size_t size = proto.ByteSizeLong();
+//     void *buffer = malloc(size);
+//     if (!proto.SerializeToArray(buffer, size)) {
+//         free(buffer);
+//         return NULL;
+//     }
+//     
+//     *compile_options_size = size;
+//     return buffer;
+// }

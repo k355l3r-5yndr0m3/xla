@@ -7,7 +7,7 @@
 extern "C" {
 #endif
 const PJRT_Api* GetPjrtApi();
-const void *SerializeCompileOptions(size_t *compile_options_size);
+// const void *SerializeCompileOptions(size_t *compile_options_size);
 
 #ifdef __cplusplus 
 }

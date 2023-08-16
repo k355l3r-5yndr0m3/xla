@@ -14,9 +14,9 @@
 # ==============================================================================
 
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
-load("@hedron_compile_commands//:refresh_compile_commands.bzl", "refresh_compile_commands")
 load("@bazel_tools//tools/build_defs/pkg:pkg.bzl", "pkg_tar")
 load("//xla:xla.bzl", "xla_cc_binary")
+load("@hedron_compile_commands//:refresh_compile_commands.bzl", "refresh_compile_commands")
 
 # Configuration file for an XLA plugin.
 #
@@ -70,11 +70,11 @@ cc_library(
         "@tsl//tsl/platform:env_impl",
         "@tsl//tsl/platform:tensor_float_32_utils",
         "@tsl//tsl/profiler/utils:time_utils_impl",
-
+        
         "@tsl//tsl/profiler/backends/cpu:annotation_stack_impl",
         "@tsl//tsl/profiler/backends/cpu:traceme_recorder_impl",
         
-        "@tsl//tsl/protobuf:autotuning_proto_cc_impl",
+        # "@tsl//tsl/protobuf:autotuning_proto_cc_impl",
         "@tsl//tsl/protobuf:protos_all_cc_impl",
         "@tsl//tsl/protobuf:dnn_proto_cc_impl",
         "@tsl//tsl/framework:allocator",
@@ -98,7 +98,14 @@ xla_cc_binary(
     name = "PJRTPlugin",
     linkshared = True,
     deps = [
-        ":plugin"
+        "//xla/pjrt/c:pjrt_c_api_cpu"
+
+#        "//xla/pjrt/c:pjrt_c_api_gpu",
+#        "//xla/service:gpu_plugin",
+#
+#        "//xla/stream_executor/cuda:cuda_stream",
+#        "//xla/stream_executor/cuda:all_runtime",
+#        "//xla/stream_executor/cuda:stream_executor_cuda",
     ],
 )
 
@@ -116,15 +123,6 @@ cc_library(
     ],
 )
 
-xla_cc_binary(
-    name = "CCompileOptions",
-    linkshared = True,
-    linkstatic = True,
-    deps = [
-        ":compile_options",
-    ]
-)
-
 
 refresh_compile_commands(
     name = "refresh_compile_commands",
@@ -133,12 +131,51 @@ refresh_compile_commands(
     # For example, specify a dict of targets and any flags required to build.
     targets = {
         "//xla/pjrt/plugin:plugin": "",
-#      "//:my_output_1": "--important_flag1 --important_flag2=true",
-#      "//:my_output_2": "",
     },
     # No need to add flags already in .bazelrc. They're automatically picked up.
     # If you don't need flags, a list of targets is also okay, as is a single target string.
     # Wildcard patterns, like //... for everything, *are* allowed here, just like a build.
       # As are additional targets (+) and subtractions (-), like in bazel query https://docs.bazel.build/versions/main/query.html#expressions
     # And if you're working on a header-only library, specify a test or binary target that compiles it.
+)
+
+
+load("//xla/pjrt/plugin:cc_static_library.bzl", "cc_static_library")
+cc_library(
+    name = "compops_impl",
+    srcs = [ 
+        "compile_options.cc" 
+    ],
+    hdrs = [ 
+        "compile_options.h"
+    ],
+    deps = [
+        "//xla/pjrt:pjrt_executable",
+        "//xla:xla_proto_cc_impl",
+        "//xla:xla_data_proto_cc_impl",
+        "//xla/service:hlo_proto_cc_impl",
+        "//xla/service:memory_space_assignment_proto_cc_impl",
+        "//xla/service/gpu:backend_configs_cc_impl",
+        "//xla/service/gpu:hlo_op_profile_proto_cc_impl",
+        "//xla/stream_executor:dnn_proto_cc_impl",
+        "@tsl//tsl/platform:env_impl",
+        "@tsl//tsl/platform:tensor_float_32_utils",
+        "@tsl//tsl/profiler/utils:time_utils_impl",
+        "@tsl//tsl/profiler/backends/cpu:annotation_stack_impl",
+        "@tsl//tsl/profiler/backends/cpu:traceme_recorder_impl",
+        "//xla:autotuning_proto_cc_impl",
+        "@tsl//tsl/protobuf:protos_all_cc_impl",
+        "@tsl//tsl/protobuf:dnn_proto_cc_impl",
+        "@tsl//tsl/framework:allocator",
+        "@tsl//tsl/framework:allocator_registry_impl",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/util:determinism",
+        "@com_google_protobuf//:protobuf",
+    ],
+)
+cc_static_library(
+    name = "libcompops",
+    deps = [
+        "//xla/pjrt/plugin:compops_impl",
+    ],
 )
