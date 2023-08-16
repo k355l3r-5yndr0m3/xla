@@ -140,6 +140,7 @@ xla_cc_test(
         "//xla/service/gpu:gpu_executable",
         "//xla/tests:filecheck",
         "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:test_main",
     ] + if_cuda_is_configured([
@@ -729,6 +730,7 @@ xla_cc_binary(
         "//xla/stream_executor:dnn",
         "//xla/stream_executor:stream_executor_impl",
         "//xla/stream_executor/host:host_platform",
+        "//xla/tests:test_utils",
         "//xla/tools:hlo_module_loader",
         "@llvm-project//llvm:Target",
         "@tsl//tsl/platform:logging",

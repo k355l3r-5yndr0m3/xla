@@ -240,6 +240,7 @@ xla_cc_test(
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
         "@com_google_googletest//:gtest",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -248,11 +249,14 @@ cc_library(
     srcs = ["hlo_extractor.cc"],
     hdrs = ["hlo_extractor.h"],
     deps = [
+        "//xla:literal",
         "//xla:literal_util",
         "//xla:shape_util",
         "//xla:status",
+        "//xla:statusor",
         "//xla/hlo/ir:hlo",
         "//xla/service:compilation_environments",
+        "//xla/service:hlo_module_config",
         "//xla/service:hlo_verifier",
         "//xla/tests:test_utils",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -271,8 +275,10 @@ xla_cc_test(
         "//xla/hlo/utils:hlo_matchers",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -281,11 +287,17 @@ cc_library(
     srcs = ["hlo_slicer.cc"],
     hdrs = ["hlo_slicer.h"],
     deps = [
+        ":hlo_extractor",
+        "//xla:shape_util",
         "//xla/hlo/ir:hlo",
         "//xla/service:call_graph",
+        "//xla/service:hlo_verifier",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:status",
     ],
 )
 
