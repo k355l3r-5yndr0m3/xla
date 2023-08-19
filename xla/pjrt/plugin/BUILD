@@ -47,6 +47,8 @@ cc_library(
         "plugin.h",
     ],
     deps = [
+        "//xla/pjrt:pjrt_api",
+
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc_impl",
         "//xla:xla_data_proto_cc_impl",
@@ -98,7 +100,8 @@ xla_cc_binary(
     name = "PJRTPlugin",
     linkshared = True,
     deps = [
-        "//xla/pjrt/c:pjrt_c_api_cpu"
+        ":plugin"
+#        "//xla/pjrt/c:pjrt_c_api_cpu"
 
 #        "//xla/pjrt/c:pjrt_c_api_gpu",
 #        "//xla/service:gpu_plugin",
