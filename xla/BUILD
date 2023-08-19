@@ -116,6 +116,8 @@ xla_cc_test(
     deps = [
         ":bit_cast",
         ":test",
+        "@eigen_archive//:eigen3",
+        "@tsl//tsl/platform:bfloat16",
         "@tsl//tsl/platform:test_main",
     ],
 )
@@ -138,8 +140,10 @@ cc_library(
         ":xla_data_proto_cc",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/meta:type_traits",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:float8",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -149,8 +153,8 @@ xla_cc_test(
     deps = [
         ":comparison_util",
         ":test",
+        ":types",
         ":xla_data_proto_cc",
-        "@tsl//tsl/platform:bfloat16",
         "@tsl//tsl/platform:test_main",
     ],
 )
@@ -417,13 +421,17 @@ cc_library(
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:float8",
         "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:macros",
         "@tsl//tsl/platform:platform_port",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -446,14 +454,9 @@ xla_cc_test(
     srcs = ["shape_test.cc"],
     deps = [
         ":shape_util",
-        ":status_macros",
         ":test",
-        ":test_helpers",
-        ":types",
-        ":util",
         ":xla_data_proto_cc",
         "@com_google_absl//absl/hash:hash_testing",
-        "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:test_benchmark",
         "@tsl//tsl/platform:test_main",
     ],
@@ -463,15 +466,16 @@ xla_cc_test(
     name = "shape_util_test",
     srcs = ["shape_util_test.cc"],
     deps = [
-        ":permutation_util",
         ":shape_util",
-        ":status_macros",
+        ":status",
+        ":statusor",
         ":test",
         ":test_helpers",
         ":types",
         ":util",
         ":xla_data_proto_cc",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/platform:test_benchmark",
@@ -901,14 +905,15 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":shape_util",
-        ":status_macros",
-        "@com_google_absl//absl/algorithm:container",
+        ":status",
+        ":statusor",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/lib/gtl:iterator_range",
+        "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 

@@ -201,10 +201,17 @@ cc_library(
     hdrs = ["pjrt_client_test.h"],
     deps = [
         ":pjrt_client",
+        "//xla:shape_util",
+        "//xla:statusor",
         "//xla:test",
+        "//xla:xla_data_proto_cc",
         "//xla/client:xla_builder",
+        "//xla/client:xla_computation",
+        "//xla/service:hlo_parser",
         "//xla/tests:literal_test_util",
         "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:statusor",
     ],
     alwayslink = 1,
 )
@@ -288,6 +295,7 @@ xla_cc_test(
         ":pjrt_client",
         ":pjrt_compiler",
         "//xla/client:xla_computation",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -316,6 +324,7 @@ cc_library(
         "//xla/service:computation_placer",
         "//xla/service:hlo_proto_cc",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:errors",
