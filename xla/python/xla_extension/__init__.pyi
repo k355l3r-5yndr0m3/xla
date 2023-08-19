@@ -457,6 +457,13 @@ def get_gpu_client(
     node_id: int = ...,
     allowed_devices: Optional[Any] = ...,
     platform_name: Optional[str] = ...) -> Client:...
+def get_mock_gpu_client(
+    asynchronous: bool = ...,
+    allocator_config: GpuAllocatorConfig = ...,
+    distributed_client: Optional[DistributedRuntimeClient] = ...,
+    node_id: int = ...,
+    allowed_devices: Optional[Any] = ...,
+    platform_name: Optional[str] = ...) -> Client:...
 def get_c_api_client(platform_name: str, options: Dict[str, Union[str, int, List[int], float]]) -> Client: ...
 def get_default_c_api_topology(
     platform_name: str,
@@ -580,11 +587,13 @@ class DeviceTopology:
   platform: str
   platform_version: str
   def _make_compile_only_devices(self) -> List[Device]: ...
+  def serialize(self) -> bytes: ...
 
 
 def buffer_to_dlpack_managed_tensor(
     buffer: ArrayImpl,
-    take_ownership: bool = ...) -> Any: ...
+    take_ownership: bool = ...,
+    stream: int | None = None) -> Any: ...
 def dlpack_managed_tensor_to_buffer(
     tensor: Any, cpu_backend: Optional[Client] = ...,
     gpu_backend: Optional[Client] = ...) -> ArrayImpl: ...
@@ -707,16 +716,19 @@ class NamedSharding(XLACompatibleSharding):
   spec: Any
   _memory_kind: Optional[str]
   _parsed_pspec: Any
+  _internal_device_list: DeviceList
 
 class SingleDeviceSharding(XLACompatibleSharding):
   def __init__(self, device: Device, *, memory_kind: Optional[str] = None): ...
   _device: Device
   _memory_kind: Optional[str]
+  _internal_device_list: DeviceList
 
 class PmapSharding(XLACompatibleSharding):
   def __init__(self, devices: Sequence[Any], sharding_spec: pmap_lib.ShardingSpec): ...
   devices: List[Any]
   sharding_spec: pmap_lib.ShardingSpec
+  _internal_device_list: DeviceList
 
 class GSPMDSharding(XLACompatibleSharding):
   def __init__(self, devices: Sequence[Device],
@@ -725,6 +737,7 @@ class GSPMDSharding(XLACompatibleSharding):
   _devices: Tuple[Device, ...]
   _hlo_sharding: HloSharding
   _memory_kind: Optional[str]
+  _internal_device_list: DeviceList
 
 class PjitFunction:
   def __call__(self, *args, **kwargs) -> Any: ...

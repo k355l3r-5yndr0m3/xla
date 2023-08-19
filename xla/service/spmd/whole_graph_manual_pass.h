@@ -13,24 +13,21 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_SERVICE_CPU_ONEDNN_REWRITER_H_
-#define XLA_SERVICE_CPU_ONEDNN_REWRITER_H_
-#if defined(INTEL_MKL) && defined(ENABLE_ONEDNN_V3)
+#ifndef XLA_SERVICE_SPMD_WHOLE_GRAPH_MANUAL_PASS_H_
+#define XLA_SERVICE_SPMD_WHOLE_GRAPH_MANUAL_PASS_H_
 
-#include <optional>
-
-#include "absl/algorithm/container.h"
-#include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/hlo_pass_interface.h"
 
 namespace xla {
-namespace cpu {
 
-// This pass pattern-matches hlo instructions and rewrites into custom calls.
-class OneDnnRewriter : public HloModulePass {
+// This pass adds manual sharding annotation to every instruction in the graph
+// to specify that this graph is manually sharded and any subsequent execution
+// of the SPMD partitioner will not try to partition the graph.
+class WholeGraphManualPass : public HloModulePass {
  public:
-  absl::string_view name() const override { return "onednn-rewriter"; }
+  WholeGraphManualPass() : HloModulePass() {}
+  absl::string_view name() const override { return "whole-graph-manual-pass"; }
 
   using HloPassInterface::Run;
   StatusOr<bool> Run(
@@ -38,8 +35,6 @@ class OneDnnRewriter : public HloModulePass {
       const absl::flat_hash_set<absl::string_view>& execution_threads) override;
 };
 
-}  // namespace cpu
 }  // namespace xla
 
-#endif  // INTEL_MKL && ENABLE_ONEDNN_V3
-#endif  // XLA_SERVICE_CPU_ONEDNN_REWRITER_H_
+#endif  // XLA_SERVICE_SPMD_WHOLE_GRAPH_MANUAL_PASS_H_
