@@ -21,3 +21,6 @@ bazel-testlogs
 *.VC.opendb
 *.suo
 *.user
+
+.tf_configure.bazelrc
+tools/python_bin_path.sh
