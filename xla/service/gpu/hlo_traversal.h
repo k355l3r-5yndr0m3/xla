@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <functional>
 
+#include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 
 namespace xla {
@@ -33,14 +34,41 @@ enum class TraversalResult {
   kDoNotVisitOperands,
 };
 
-// Visit the HLO nodes starting from `root` in BFS order (consumers before
+using FusionBoundaryFn = std::function<bool(const HloInstruction& producer,
+                                            const HloInstruction& consumer)>;
+
+// Boundary function for HloFusionInstructions.
+bool DefaultFusionBoundaryFn(const HloInstruction& producer,
+                             const HloInstruction& consumer);
+
+// Visit the HLO nodes starting from `roots` in BFS order (consumers before
 // producers). Each node will be visited exactly once. The graph is not
 // traversed along edges for which `boundary` returns true.
 void HloBfsConsumersFirstTraversal(
-    const HloInstruction& root,
-    const std::function<bool(const HloInstruction& producer,
-                             const HloInstruction& consumer)>& boundary,
+    absl::Span<const HloInstruction* const> roots,
+    const FusionBoundaryFn& boundary,
     const std::function<TraversalResult(const HloInstruction& node)>& visit);
+
+// Visit the HLO nodes starting from `roots`, returning true if the return value
+// of `visit` for any of nodes is true. Uses the same order as
+// `HloBfsConsumersFirstTraversal`.
+bool HloAnyOf(absl::Span<const HloInstruction* const> roots,
+              const FusionBoundaryFn& boundary,
+              const std::function<bool(const HloInstruction& node)>& visit);
+
+// Visit the HLO nodes stating from `roots`, returning the first
+// node for which `visit` returns true, or `nullptr` if no node matches. Uses
+// the same order as `HloBfsConsumersFirstTraversal`.
+const HloInstruction* HloFindIf(
+    absl::Span<const HloInstruction* const> roots,
+    const FusionBoundaryFn& boundary,
+    const std::function<bool(const HloInstruction& node)>& visit);
+
+// Visit the producers of all parameters that are needed by the fusion.
+void FindFusionParameters(
+    absl::Span<const HloInstruction* const> roots,
+    const FusionBoundaryFn& boundary,
+    const std::function<void(const HloInstruction& producer)>& visit);
 
 }  // namespace gpu
 }  // namespace xla

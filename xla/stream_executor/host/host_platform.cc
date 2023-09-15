@@ -47,16 +47,6 @@ HostPlatform::DescriptionForDevice(int ordinal) const {
 tsl::StatusOr<StreamExecutor*> HostPlatform::ExecutorForDevice(int ordinal) {
   StreamExecutorConfig config;
   config.ordinal = ordinal;
-  config.plugin_config = PluginConfig();
-  config.device_options = DeviceOptions::Default();
-  return GetExecutor(config);
-}
-
-tsl::StatusOr<StreamExecutor*> HostPlatform::ExecutorForDeviceWithPluginConfig(
-    int device_ordinal, const PluginConfig& plugin_config) {
-  StreamExecutorConfig config;
-  config.ordinal = device_ordinal;
-  config.plugin_config = plugin_config;
   config.device_options = DeviceOptions::Default();
   return GetExecutor(config);
 }
@@ -70,8 +60,7 @@ tsl::StatusOr<StreamExecutor*> HostPlatform::GetExecutor(
 tsl::StatusOr<std::unique_ptr<StreamExecutor>>
 HostPlatform::GetUncachedExecutor(const StreamExecutorConfig& config) {
   auto executor = std::make_unique<StreamExecutor>(
-      this, std::make_unique<HostExecutor>(config.plugin_config),
-      config.ordinal);
+      this, std::make_unique<HostExecutor>(), config.ordinal);
   auto init_status = executor->Init(config.device_options);
   if (!init_status.ok()) {
     return tsl::Status(
@@ -82,15 +71,6 @@ HostPlatform::GetUncachedExecutor(const StreamExecutorConfig& config) {
   }
 
   return std::move(executor);
-}
-
-void HostPlatform::RegisterTraceListener(
-    std::unique_ptr<TraceListener> listener) {
-  LOG(FATAL) << "not yet implemented: register host trace listener";
-}
-
-void HostPlatform::UnregisterTraceListener(TraceListener* listener) {
-  LOG(FATAL) << "not yet implemented: unregister host trace listener";
 }
 
 static void InitializeHostPlatform() {

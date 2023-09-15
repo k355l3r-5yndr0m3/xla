@@ -541,12 +541,15 @@ static std::string_view StreamCaptureModeToString(
     hipGraphExec_t exec, hipGraph_t graph, GraphExecUpdateResultInfo* result) {
   VLOG(2) << "Update HIP graph executable " << exec << " with graph " << graph;
 
-  hipGraphExecUpdateResult hip_result;
-  RETURN_IF_ROCM_ERROR(hipGraphExecUpdate(exec, graph, nullptr, &hip_result),
-                       "Failed to update HIP graph");
-  auto hip_result_enum = hip_result;
+  hipGraphExecUpdateResult hip_result = hipGraphExecUpdateError;
+  hipGraphNode_t error_node = nullptr;
+  auto hip_error = hipGraphExecUpdate(exec, graph, &error_node, &hip_result);
 
-  switch (hip_result_enum) {
+  if (error_node) {
+    result->error_node = error_node;
+  }
+
+  switch (hip_result) {
     case hipGraphExecUpdateSuccess:
       result->result = GraphExecUpdateResult::kSuccess;
       break;
@@ -574,6 +577,7 @@ static std::string_view StreamCaptureModeToString(
       // TODO: HIP hasn't GRAPH_EXEC_UPDATE_ERROR_ATTRIBUTES_CHANGED yet
   }
 
+  RETURN_IF_ROCM_ERROR(hip_error, "Failed to update HIP graph");
   return ::tsl::OkStatus();
 }
 
@@ -582,6 +586,47 @@ static std::string_view StreamCaptureModeToString(
   RETURN_IF_ROCM_ERROR(hipGraphExecDestroy(exec),
                        "Failed to destroy HIP graph");
   return ::tsl::OkStatus();
+}
+
+/* static */ tsl::StatusOr<GpuDriver::GraphNodeType>
+GpuDriver::GraphNodeGetType(hipGraphNode_t node) {
+  hipGraphNodeType node_type = hipGraphNodeTypeCount;
+  RETURN_IF_ROCM_ERROR(hipGraphNodeGetType(node, &node_type),
+                       "Failed to get HIP graph node type");
+
+  switch (node_type) {
+    case hipGraphNodeTypeCount:
+      break;
+    case hipGraphNodeTypeKernel:
+      return GraphNodeType::kKernel;
+    case hipGraphNodeTypeMemcpy:
+    case hipGraphNodeTypeMemcpyFromSymbol:
+    case hipGraphNodeTypeMemcpyToSymbol:
+      return GraphNodeType::kMemcpy;
+    case hipGraphNodeTypeMemset:
+      return GraphNodeType::kMemset;
+    case hipGraphNodeTypeHost:
+      return GraphNodeType::kHost;
+    case hipGraphNodeTypeGraph:
+      return GraphNodeType::kGraph;
+    case hipGraphNodeTypeEmpty:
+      return GraphNodeType::kEmpty;
+    case hipGraphNodeTypeWaitEvent:
+      return GraphNodeType::kWaitEvent;
+    case hipGraphNodeTypeEventRecord:
+      return GraphNodeType::kEventRecord;
+    case hipGraphNodeTypeExtSemaphoreSignal:
+      return GraphNodeType::kExtSemasSignal;
+    case hipGraphNodeTypeExtSemaphoreWait:
+      return GraphNodeType::kExtSemasWait;
+    case hipGraphNodeTypeMemAlloc:
+      return GraphNodeType::kMemAlloc;
+    case hipGraphNodeTypeMemFree:
+      return GraphNodeType::kMemFree;
+  }
+
+  return tsl::Status(absl::StatusCode::kInternal,
+                     "Invalid HIP graph node type");
 }
 
 /* static */ tsl::Status GpuDriver::GraphDebugDotPrint(hipGraph_t graph,

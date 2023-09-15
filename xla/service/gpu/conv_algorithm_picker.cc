@@ -39,6 +39,8 @@ limitations under the License.
 #include "xla/service/gpu/hlo_algorithm_denylist.h"
 #include "xla/service/gpu/stream_executor_util.h"
 #include "xla/service/slow_operation_alarm.h"
+#include "xla/stream_executor/cuda/cuda_platform_id.h"
+#include "xla/stream_executor/rocm/rocm_platform_id.h"
 #include "xla/stream_executor/scratch_allocator.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor_pimpl.h"
@@ -384,9 +386,10 @@ StatusOr<AutotuneResult> GpuConvAlgorithmPicker::PickBestAlgorithmNoCache(
   // Check StreamExecutor on which platform it is. ROCm and Cuda implementation
   // have diverged. Specifically, we need to make sure redzone allocator related
   // utilities are not used in ROCm routine
-  if (stream_exec->platform_kind() == se::PlatformKind::kROCm) {
+  se::Platform::Id platform_id = stream_exec->platform()->id();
+  if (platform_id == se::rocm::kROCmPlatformId) {
     result_or = PickBestAlgorithmNoCacheRocm(instr, allocator, stream);
-  } else if (stream_exec->platform_kind() == se::PlatformKind::kCuda) {
+  } else if (platform_id == se::cuda::kCudaPlatformId) {
 #if (defined(GOOGLE_CUDA) && GOOGLE_CUDA)
     DebugOptions debug_opts = instr->GetModule()->config().debug_options();
     TF_ASSIGN_OR_RETURN(
@@ -1082,6 +1085,7 @@ StatusOr<bool> GpuConvAlgorithmPicker::RunOnInstruction(HloInstruction* instr) {
   HloComputation* computation = instr->parent();
   std::vector<Shape> new_call_element_shapes;
   // Add the shapes of the outputs of the convolution.
+  new_call_element_shapes.reserve(instr->shape().tuple_shapes_size() - 1);
   for (int i = 0; i < instr->shape().tuple_shapes_size() - 1; ++i) {
     new_call_element_shapes.emplace_back(instr->shape().tuple_shapes(i));
   }
@@ -1110,6 +1114,7 @@ StatusOr<bool> GpuConvAlgorithmPicker::RunOnInstruction(HloInstruction* instr) {
   TF_RETURN_IF_ERROR(new_call->set_backend_config(backend_config));
 
   std::vector<HloInstruction*> new_tuple_elements;
+  new_tuple_elements.reserve(new_call->shape().tuple_shapes_size() - 1);
   for (int i = 0; i < new_call->shape().tuple_shapes_size() - 1; ++i) {
     new_tuple_elements.emplace_back(
         computation->AddInstruction(HloInstruction::CreateGetTupleElement(

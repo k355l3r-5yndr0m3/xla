@@ -3223,9 +3223,10 @@ bool HloParserImpl::ParseStatisticsViz(StatisticsViz* statistics_viz) {
   return ParseToken(TokKind::kRbrace, "expects '}' at the end of statistics");
 }
 
-// ::= '{' 'replicated'? 'manual'? 'maximal'? ('device=' int)? shape?
+// ::= '{' 'replicated'? 'manual'? 'maximal'? 'unknown'? ('device=' int)? shape?
 //         ('devices=' ('[' dims ']')* device_list)?
-//         ('metadata=' metadata)* '}'
+//         (('shard_like' | 'shard_as') int)* '}'
+//         ('metadata=' metadata)*
 //
 // dims ::= int_list
 // device_list ::= int_list? ('<=[' int_list ']{' int_list '}')?
@@ -3244,8 +3245,12 @@ bool HloParserImpl::ParseSingleSharding(OpSharding* sharding,
   bool maximal = false;
   bool replicated = false;
   bool manual = false;
+  bool unknown = false;
   bool last_tile_dim_replicate = false;
   bool last_tile_dims = false;
+  bool shard_like = false;
+  bool shard_as = false;
+  int64_t shard_group_id;
   std::vector<int64_t> devices;
   std::vector<int64_t> tile_assignment_dimensions;
   std::vector<int64_t> iota_reshape_dims;
@@ -3263,6 +3268,10 @@ bool HloParserImpl::ParseSingleSharding(OpSharding* sharding,
         break;
       case TokKind::kw_manual:
         manual = true;
+        lexer_.Lex();
+        break;
+      case TokKind::kw_unknown:
+        unknown = true;
         lexer_.Lex();
         break;
       case TokKind::kAttributeName: {
@@ -3375,6 +3384,22 @@ bool HloParserImpl::ParseSingleSharding(OpSharding* sharding,
         last_tile_dim_replicate = true;
         lexer_.Lex();
         break;
+      case TokKind::kw_shard_as: {
+        shard_as = true;
+        lexer_.Lex();
+        if (!ParseInt64(&shard_group_id)) {
+          return false;
+        }
+        break;
+      }
+      case TokKind::kw_shard_like: {
+        shard_like = true;
+        lexer_.Lex();
+        if (!ParseInt64(&shard_group_id)) {
+          return false;
+        }
+        break;
+      }
       case TokKind::kRbrace:
         break;
       default:
@@ -3401,6 +3426,12 @@ bool HloParserImpl::ParseSingleSharding(OpSharding* sharding,
                    "manual shardings should not have any devices assigned");
     }
     sharding->set_type(OpSharding::MANUAL);
+  } else if (unknown) {
+    if (!devices.empty()) {
+      return Error(loc,
+                   "unknown shardings should not have any devices assigned");
+    }
+    sharding->set_type(OpSharding::UNKNOWN);
   } else {
     if (tile_assignment_dimensions.empty()) {
       return Error(
@@ -3445,6 +3476,18 @@ bool HloParserImpl::ParseSingleSharding(OpSharding* sharding,
     } else {
       sharding->set_replicate_on_last_tile_dim(last_tile_dim_replicate);
     }
+  }
+
+  if (shard_as || shard_like) {
+    sharding->set_is_shard_group(true);
+    sharding->set_shard_group_id(shard_group_id);
+    if (shard_as) {
+      sharding->set_shard_group_type(OpSharding::AS);
+    } else {
+      sharding->set_shard_group_type(OpSharding::LIKE);
+    }
+  } else {
+    sharding->set_is_shard_group(false);
   }
 
   lexer_.Lex();

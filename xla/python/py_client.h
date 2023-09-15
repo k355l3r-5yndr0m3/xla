@@ -153,6 +153,8 @@ class PyClient : public std::enable_shared_from_this<PyClient> {
 
   std::vector<ClientAndPtr<PjRtDevice>> Devices();
   std::vector<ClientAndPtr<PjRtDevice>> LocalDevices();
+  StatusOr<ClientAndPtr<PjRtDevice>> DeviceFromLocalHardwareId(
+      int local_hardware_id);
 
   // Returns a vector of live PyArray objects. PyArray objects may share
   // PjRtBuffers, so there may be duplicates of the same underlying device
@@ -167,13 +169,6 @@ class PyClient : public std::enable_shared_from_this<PyClient> {
 
   // TODO(zhangqiaorjc): Remove when we have transparent defragmentation.
   Status Defragment();
-
-  StatusOr<std::vector<std::vector<ClientAndPtr<PjRtDevice>>>>
-  GetDefaultDeviceAssignment(int num_replicas, int num_partitions);
-
-  // TODO(skye): delete after all callers can handle 2D output
-  StatusOr<std::vector<ClientAndPtr<PjRtDevice>>> GetDefaultDeviceAssignment1D(
-      int num_replicas);
 
   StatusOr<std::vector<std::pair<pybind11::bytes, pybind11::object>>>
   MakeCrossHostReceiveBuffers(absl::Span<const Shape> shapes,

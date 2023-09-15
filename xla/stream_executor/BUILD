@@ -64,6 +64,7 @@ cc_library(
         ":dnn_proto_cc",
         ":host_or_device_scalar",
         "//xla/stream_executor/platform",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/memory",
@@ -91,10 +92,7 @@ cc_library(
         "gpu_launch_dim.h",
         "launch_dim.h",
     ],
-    deps = [
-        "//xla/stream_executor/platform",
-        "@com_google_absl//absl/strings",
-    ],
+    deps = ["@com_google_absl//absl/strings"],
 )
 
 cc_library(
@@ -129,7 +127,7 @@ cc_library(
         ":device_description_proto_cc",
         ":launch_dim",
         "//xla/stream_executor/platform",
-        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/lib/math:math_util",
         "@tsl//tsl/platform:numbers",
@@ -245,7 +243,6 @@ cc_library(
 
 cc_library(
     name = "plugin",
-    srcs = ["plugin.cc"],
     hdrs = ["plugin.h"],
 )
 
@@ -319,6 +316,7 @@ cc_library(
         ":plugin",
         ":stream_executor_headers",
         "//xla/stream_executor/platform",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/memory",
@@ -395,6 +393,7 @@ cc_library(
         ":stream_executor_headers",
         ":stream_executor_internal",
         "//xla/stream_executor/platform",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/memory",
@@ -497,6 +496,7 @@ cc_library(
         ":plugin_registry",
         ":stream_executor_headers",
         "//xla/stream_executor/platform",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/memory",
@@ -534,6 +534,7 @@ cc_library(
         ":stream_executor_headers",
         ":stream_executor_pimpl_header",
         "//xla/stream_executor/platform",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/strings",
@@ -612,6 +613,7 @@ cc_library(
         ":plugin",
         ":stream_executor_headers",
         "//xla/stream_executor/platform",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/memory",

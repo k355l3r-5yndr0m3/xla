@@ -24,6 +24,7 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <ostream>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -44,12 +45,20 @@ class HloSharding {
   // Creates a trivial sharding that replicates a maximal tile across all
   // devices.
   static HloSharding Replicate(absl::Span<const OpMetadata> metadata = {}) {
-    return HloSharding(/*manual=*/false, /*replicated=*/true, metadata);
+    return HloSharding(/*manual=*/false, /*replicated=*/true, /*unknown=*/false,
+                       metadata);
   }
 
   // Creates a sharding that represents the op is manually partitioned.
   static HloSharding Manual(absl::Span<const OpMetadata> metadata = {}) {
-    return HloSharding(/*manual=*/true, /*replicated=*/false, metadata);
+    return HloSharding(/*manual=*/true, /*replicated=*/false, /*unknown=*/false,
+                       metadata);
+  }
+
+  // Creates a sharding that represents the op has a placeholder sharding.
+  static HloSharding Unknown(absl::Span<const OpMetadata> metadata = {}) {
+    return HloSharding(/*manual=*/false, /*replicated=*/false, /*unknown=*/true,
+                       metadata);
   }
 
   // Creates a sharding that emulates device placement; a tile shape equal to
@@ -188,6 +197,40 @@ class HloSharding {
                           [](const HloSharding& s) { return s.IsManual(); });
   }
 
+  // Returns whether the sharding represents a placeholder sharding.
+  bool IsUnknown() const {
+    if (!IsTuple()) {
+      return unknown_;
+    }
+    return absl::c_all_of(tuple_elements_,
+                          [](const HloSharding& s) { return s.IsUnknown(); });
+  }
+
+  bool IsShardGroup() const {
+    if (!IsTuple()) {
+      return shard_group_.shard_group_id != -1 &&
+             (shard_group_.shard_like || shard_group_.shard_as);
+    }
+    return absl::c_all_of(
+        tuple_elements_, [](const HloSharding& s) { return s.IsShardGroup(); });
+  }
+
+  bool IsShardAs() const {
+    if (!IsTuple()) {
+      return shard_group_.shard_group_id != -1 && shard_group_.shard_as;
+    }
+    return absl::c_all_of(tuple_elements_,
+                          [](const HloSharding& s) { return s.IsShardAs(); });
+  }
+
+  bool IsShardLike() const {
+    if (!IsTuple()) {
+      return shard_group_.shard_group_id != -1 && shard_group_.shard_like;
+    }
+    return absl::c_all_of(tuple_elements_,
+                          [](const HloSharding& s) { return s.IsShardLike(); });
+  }
+
   // Returns whether the sharding represents manual subgroup sharding.
   bool IsManualSubgroup() const {
     if (!IsTuple()) {
@@ -200,7 +243,9 @@ class HloSharding {
 
   // Returns weather the sharding represents a tiled sharding where the mapping
   // between devices and tiles is represented through 'tile_assignment()'.
-  bool IsTiled() const { return !IsTileMaximal() && !IsManual(); }
+  bool IsTiled() const {
+    return !IsTileMaximal() && !IsManual() && !IsUnknown();
+  }
 
   // Returns if the sharding has partial replication and partial sharding. If
   // true, data is sharded according to other dimensions of tile_assignment(),
@@ -308,11 +353,12 @@ class HloSharding {
 
   bool operator==(const HloSharding& other) const {
     return replicated_ == other.replicated_ && maximal_ == other.maximal_ &&
-           manual_ == other.manual_ &&
+           manual_ == other.manual_ && unknown_ == other.unknown_ &&
            tile_assignment_ == other.tile_assignment_ &&
            tuple_elements_ == other.tuple_elements_ &&
            replicate_on_last_tile_dim_ == other.replicate_on_last_tile_dim_ &&
-           subgroup_types_ == other.subgroup_types_;
+           subgroup_types_ == other.subgroup_types_ &&
+           shard_group_ == other.shard_group_;
   }
   bool operator!=(const HloSharding& other) const { return !(*this == other); }
 
@@ -322,8 +368,9 @@ class HloSharding {
       return H::combine(std::move(h), sharding.tuple_elements_);
     }
     return H::combine(std::move(h), sharding.replicated_, sharding.manual_,
-                      sharding.tile_assignment_.array(),
-                      sharding.replicate_on_last_tile_dim_);
+                      sharding.unknown_, sharding.tile_assignment_.array(),
+                      sharding.replicate_on_last_tile_dim_,
+                      sharding.shard_group_.ToString());
   }
 
   // Gets the tile assignment tensor.
@@ -365,7 +412,7 @@ class HloSharding {
   std::vector<OpMetadata>& metadata() { return metadata_; }
   const std::vector<OpMetadata>& metadata() const { return metadata_; }
 
-  // Returns the replication subgroiup dim, or -1 if it doesn't exist.
+  // Returns the replication subgroup dim, or -1 if it doesn't exist.
   int64_t SubgroupReplicationDim() const {
     auto it = absl::c_find(subgroup_types_, OpSharding::REPLICATED);
     if (it != subgroup_types_.end()) {
@@ -400,14 +447,84 @@ class HloSharding {
   // Returns the number of tuple_elements_ entries to fit the shape.
   static int64_t RequiredLeaves(const Shape& shape);
 
+  struct ShardGroup {
+    ShardGroup(int64_t shard_group_id, bool shard_as, bool shard_like)
+        : shard_group_id(shard_group_id),
+          shard_as(shard_as),
+          shard_like(shard_like) {}
+
+    bool operator==(const ShardGroup& rhs) const {
+      return shard_group_id == rhs.shard_group_id && shard_as == rhs.shard_as &&
+             shard_like == rhs.shard_like;
+    }
+
+    std::string ToString() const {
+      std::ostringstream result;
+      if (shard_as) {
+        result << "shard_as " << shard_group_id;
+      } else if (shard_like) {
+        result << "shard_like " << shard_group_id;
+      }
+      return result.str();
+    }
+
+    int64_t shard_group_id = 0;
+    bool shard_as;
+    bool shard_like;
+  };
+  static ShardGroup NotShardGroup() {
+    return ShardGroup(
+        /*shard_group_id=*/-1,
+        /*shard_as=*/false,
+        /*shard_like=*/false);
+  }
+
+  static ShardGroup ShardAs(int64_t shard_group_id) {
+    return ShardGroup(shard_group_id,
+                      /*shard_as=*/true,
+                      /*shard_like=*/false);
+  }
+
+  static ShardGroup ShardLike(int64_t shard_group_id) {
+    return ShardGroup(shard_group_id,
+                      /*shard_as=*/false,
+                      /*shard_like=*/true);
+  }
+
+  HloSharding& SetShardGroup(const ShardGroup& shard_group) {
+    shard_group_ = shard_group;
+    return *this;
+  }
+
+  HloSharding& SetShardGroupFromProto(const OpSharding& proto) {
+    ShardGroup shard_group = NotShardGroup();
+    if (proto.is_shard_group()) {
+      if (proto.shard_group_type() == OpSharding::AS) {
+        shard_group = ShardAs(proto.shard_group_id());
+      } else {
+        shard_group = ShardLike(proto.shard_group_id());
+      }
+    }
+    SetShardGroup(shard_group);
+    return *this;
+  }
+
+  HloSharding& ClearShardGroup() {
+    shard_group_ = NotShardGroup();
+    return *this;
+  }
+
+  const ShardGroup& GetShardGroup() const { return shard_group_; }
+
  private:
-  explicit HloSharding(bool manual, bool replicated,
+  explicit HloSharding(bool manual, bool replicated, bool unknown,
                        absl::Span<const OpMetadata> metadata)
       : metadata_(metadata.begin(), metadata.end()),
         replicated_(replicated),
         maximal_(replicated),
         tuple_(false),
         manual_(manual),
+        unknown_(unknown),
         replicate_on_last_tile_dim_(false) {}
   // device_id values:
   // -2: magic number to mean unassigned device, used by spatial partitioning
@@ -422,6 +539,7 @@ class HloSharding {
         maximal_(true),
         tuple_(false),
         manual_(false),
+        unknown_(false),
         replicate_on_last_tile_dim_(false) {}
   explicit HloSharding(TileAssignment tile_assignment,
                        bool replicate_on_last_tile_dim,
@@ -432,6 +550,7 @@ class HloSharding {
         maximal_(false),
         tuple_(false),
         manual_(false),
+        unknown_(false),
         replicate_on_last_tile_dim_(replicate_on_last_tile_dim) {}
   explicit HloSharding(TileAssignment tile_assignment,
                        absl::Span<const OpSharding::Type> subgroup_types,
@@ -443,6 +562,7 @@ class HloSharding {
         maximal_(false),
         tuple_(false),
         manual_(false),
+        unknown_(false),
         replicate_on_last_tile_dim_(false) {}
   explicit HloSharding(const std::vector<HloSharding>& tuple_shardings)
       : tuple_elements_(tuple_shardings),
@@ -450,6 +570,7 @@ class HloSharding {
         maximal_(false),
         tuple_(true),
         manual_(false),
+        unknown_(false),
         replicate_on_last_tile_dim_(false) {}
 
   // Test-only constructor for sharding format code coverage. Copies the
@@ -463,6 +584,7 @@ class HloSharding {
         maximal_(other.maximal_),
         tuple_(other.tuple_),
         manual_(other.manual_),
+        unknown_(other.unknown_),
         replicate_on_last_tile_dim_(other.replicate_on_last_tile_dim_) {
     CHECK(tile_assignment_ == other.tile_assignment_)
         << tile_assignment_.ToString() << " v.s. "
@@ -517,11 +639,16 @@ class HloSharding {
   bool maximal_;
   bool tuple_;
   bool manual_;
+  bool unknown_;
   // This flag is to support partial replication and partial sharding. If it is
   // true, tile_assignment_ will have an extra dimension in addition to the data
   // shape rank, and the added last dimension represents the subgroups of
   // replications, i.e., elements in slice [..., :] will be replicated.
   bool replicate_on_last_tile_dim_;
+  // This field is used to store the shard group information. Instructions
+  // within the same shard group(i.e. under the same shard_group_id) will be
+  // sharded alike or exactly the same as each other.
+  ShardGroup shard_group_ = NotShardGroup();
 };
 
 std::ostream& operator<<(std::ostream& out, const HloSharding& sharding);

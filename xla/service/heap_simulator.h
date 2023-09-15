@@ -21,6 +21,7 @@ limitations under the License.
 #include <functional>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <utility>
@@ -223,6 +224,10 @@ class HeapSimulator {
   void ShareBuffer(const HloValue* buffer, const HloValue* shared,
                    const HloInstruction* instruction);
 
+  // Returns the size of the HloValue, which is the max size of the HloValues
+  // that are part of the HloBuffer.
+  int64_t GetBufferSize(const HloValue* buffer) const;
+
   // Returns true if:
   //  Two buffers belong to the same shared group.
   //  Eight of the buffer has no shared group assigned.
@@ -252,6 +257,8 @@ class HeapSimulator {
   // Hold some sets for error-checking the sequence of Alloc and Free calls.
   absl::flat_hash_set<const HloValue*> allocated_buffers_;
   absl::flat_hash_set<const HloValue*> freed_buffers_;
+
+  absl::flat_hash_map<const HloValue*, int64_t> buffer_sizes_;
 
   // Debugging information filled in while the heap simulator runs.
   HeapSimulatorTrace debug_trace_;
@@ -466,7 +473,7 @@ class GlobalDecreasingSizeBestFitHeap : public HeapAlgorithm<BufferType> {
     //
     // REQUIRES:
     // - sum(slice_sizes_sorted_by_offset) == full_buffer_interval_.size
-    void Slice(absl::Span<int64_t> slice_sizes_sorted_by_offset);
+    void Slice(absl::Span<const int64_t> slice_sizes_sorted_by_offset);
 
     // Updates the times at which we will start each slice. However, we have not
     // yet decided which slice size will correspond to which start time.
@@ -596,6 +603,10 @@ class GlobalDecreasingSizeBestFitHeap : public HeapAlgorithm<BufferType> {
         std::map<int64_t, FreeChunkRoot, std::greater<int64_t>>;
 #endif
 
+    // A method that can be passed to the is_offset_allowed parameter for
+    // SlicedAllocationFinder() that permits placement at any offset.
+    static bool AllOffsetsAllowed(int64_t offset) { return true; }
+
     // Arguments:
     // - free_chunks_per_slice_time[i]: Describes free chunks at slice time i.
     // - sorted_slice_sizes: A sliced allocation request. In space, the i+1th
@@ -604,8 +615,8 @@ class GlobalDecreasingSizeBestFitHeap : public HeapAlgorithm<BufferType> {
     //   with the fully allocated sliced allocation.
     // - preferred_offset: The preferred starting offset for the fully allocated
     //   sliced allocation.
-    // - is_allocation_offset_allowed_fn: Indicates if a the entire sliced
-    //   allocation is allowed to be allocated staring at a given offset.
+    // - is_offset_allowed: Indicates if a the entire sliced allocation is
+    //   allowed to be allocated at a given offset.
     //
     // REQUIRES:
     // - sorted_slice_sizes.size() == free_chunks_per_slice_time.size()
@@ -619,7 +630,9 @@ class GlobalDecreasingSizeBestFitHeap : public HeapAlgorithm<BufferType> {
     SlicedAllocationFinder(
         absl::Span<const FreeChunks> free_chunks_per_slice_time,
         std::vector<int64_t> sorted_slice_sizes, int64_t max_colocation_size,
-        int64_t preferred_offset, int64_t alignment);
+        int64_t preferred_offset, int64_t alignment,
+        absl::AnyInvocable<bool(int64_t) const> is_offset_allowed =
+            &AllOffsetsAllowed);
 
     std::string FreeChunksToAsciiArt() const;
     std::string ToString() const;
@@ -634,6 +647,11 @@ class GlobalDecreasingSizeBestFitHeap : public HeapAlgorithm<BufferType> {
     // max_colocation_size_. This extra chunk will always come at the end of
     // the returned vector and will be present even if its size is 0.
     ChunksSortedBySliceTime Find() const;
+
+    // Similar to Find(), but only checks placement at the specified offset. If
+    // the sliced allocation can not be placed at the specified offset, an
+    // empty vector is returned.
+    ChunksSortedBySliceTime FindForOffset(int64_t offset) const;
 
    private:
     // The earliest slice time for the specified sliced allocation request.
@@ -661,12 +679,13 @@ class GlobalDecreasingSizeBestFitHeap : public HeapAlgorithm<BufferType> {
         const std::vector<int64_t>& permutation_of_slice_times,
         const FreeChunkRoot& root, int64_t offset) const;
 
-    // Same as Find() except only checks root to see if it can hold the sliced
-    // allocation request. If only_try_preferred_offset is true, only tries the
-    // preferred_offset_, when trying to find a fit for the sliced allocation
+    // Same as Find() except only checks root, to see if it can hold the sliced
+    // allocation request. If only_try_this_offset is set, we only evaluate the
+    // specified offset, when trying to find a fit for the sliced allocation
     // request.
-    ChunksSortedBySliceTime FindInRoot(const FreeChunkRoot& root,
-                                       bool only_try_preferred_offset) const;
+    ChunksSortedBySliceTime FindInRoot(
+        const FreeChunkRoot& root,
+        std::optional<int64_t> only_try_this_offset = std::nullopt) const;
 
     // Given a permutation of slice times (see DoesSlicedPermutationFit()),
     // return a vector of chunks, in which the ith chunk should be allocated at
@@ -686,6 +705,7 @@ class GlobalDecreasingSizeBestFitHeap : public HeapAlgorithm<BufferType> {
     int64_t preferred_offset_;
     int64_t alignment_;
     FreeChunkRoots free_chunks_;
+    absl::AnyInvocable<bool(int64_t) const> is_offset_allowed_;
   };
 
   explicit GlobalDecreasingSizeBestFitHeap(
@@ -750,9 +770,28 @@ class GlobalDecreasingSizeBestFitHeap : public HeapAlgorithm<BufferType> {
   // FindChunkCandidates is the same as FindChunkCandidate, except it finds
   // spatially contiguous chunks candidates for a sliced buffer interval.
   // Returned chunk i should be copied at slice time i.
+  //
+  // Given the way that FindChunkCandidates and MakeFreeChunks interact, the
+  // following properties are guaranteed about colocations.
+  // - The returned spatially contiguous chunks have enough space for every
+  //   colocation specified in sliced_buffer_interval.
+  // - The returned spatially contiguous chunks will be free for the entire
+  //   lifetime of each colocation. If a colocation is sliced, the returned
+  //   chunks will be free for the lifetime of the longest-lived slice.
   std::vector<Chunk> FindChunkCandidates(
       const SlicedBufferInterval& sliced_buffer_interval,
       int64_t preferred_offset = -1) const;
+  // The following 3 methods are used to implement FindChunkCandidates.
+  int64_t GetMaxColocationSize(const BufferInterval& buffer_interval) const;
+  SlicedAllocationFinder CreateSlicedAllocationFinder(
+      const SlicedBufferInterval& sliced_interval, int64_t max_colocation_size,
+      int64_t preferred_offset,
+      absl::AnyInvocable<bool(int64_t) const> is_offset_allowed =
+          &SlicedAllocationFinder::AllOffsetsAllowed) const;
+  std::vector<Chunk> PostProcessFindChunkCandidatesResult(
+      const SlicedBufferInterval& sliced_interval,
+      std::vector<Chunk> chunks) const;
+
   void CommitChunk(const BufferInterval& buffer_interval, Chunk chunk);
 
   // Adds the buffer and the chunk to the result chunk map.

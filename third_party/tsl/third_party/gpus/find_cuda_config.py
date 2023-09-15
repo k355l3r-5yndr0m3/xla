@@ -53,6 +53,12 @@ tf_<library>_header_dir: ...
 tf_<library>_library_dir: ...
 """
 
+# You can use the following command to regenerate the base64 version of this
+# script:
+# cat third_party/tensorflow/third_party/gpus/find_cuda_config.oss.py |
+#   pigz -z | base64 -w0 >
+#   third_party/tensorflow/third_party/gpus/find_cuda_config.py.gz.base64.oss
+
 import io
 import os
 import glob
@@ -121,7 +127,7 @@ def _at_least_version(actual_version, required_version):
 def _get_header_version(path, name):
   """Returns preprocessor defines in C header file."""
   for line in io.open(path, "r", encoding="utf-8").readlines():
-    match = re.match("\s*#\s*define %s\s+(\d+)" % name, line)
+    match = re.match(r"\s*#\s*define %s\s+(\d+)" % name, line)
     if match:
       return match.group(1)
   return ""
@@ -260,7 +266,7 @@ def _find_cuda_config(base_paths, required_version):
   cuda_library_path = _find_library(base_paths, "cudart", cuda_version)
 
   def get_nvcc_version(path):
-    pattern = "Cuda compilation tools, release \d+\.\d+, V(\d+\.\d+\.\d+)"
+    pattern = r"Cuda compilation tools, release \d+\.\d+, V(\d+\.\d+\.\d+)"
     for line in subprocess.check_output([path, "--version"]).splitlines():
       match = re.match(pattern, line.decode("ascii"))
       if match:
@@ -528,7 +534,7 @@ def _find_tensorrt_config(base_paths, required_version):
   library_path = _find_library(base_paths, "nvinfer", tensorrt_version)
 
   return {
-      "tensorrt_version": tensorrt_version,
+      "tensorrt_version": header_version,
       "tensorrt_include_dir": os.path.dirname(header_path),
       "tensorrt_library_dir": os.path.dirname(library_path),
   }
@@ -549,7 +555,7 @@ def _get_legacy_path(env_name, default=[]):
   paths. Detect those and return '/usr', otherwise forward to _list_from_env().
   """
   if env_name in os.environ:
-    match = re.match("^(/[^/ ]*)+/lib/\w+-linux-gnu/?$", os.environ[env_name])
+    match = re.match(r"^(/[^/ ]*)+/lib/\w+-linux-gnu/?$", os.environ[env_name])
     if match:
       return [match.group(1)]
   return _list_from_env(env_name, default)

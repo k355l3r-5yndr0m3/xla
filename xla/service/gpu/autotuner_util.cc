@@ -22,8 +22,16 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/status/status.h"
+#include "absl/strings/str_cat.h"
+#include "absl/synchronization/mutex.h"
+#include "xla/autotune_results.pb.h"
+#include "xla/autotuning.pb.h"
+#include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/gpu/gpu_asm_opts_util.h"
 #include "xla/service/gpu/stream_executor_util.h"
+#include "xla/status.h"
+#include "tsl/platform/errors.h"
 
 namespace xla {
 namespace gpu {
@@ -117,10 +125,26 @@ static AutotuneResult* TryFindInCache(const AutotuneCacheKey& key) {
   return nullptr;
 }
 
+/*static*/ AutotuneCacheKey AutotunerUtil::GetKey(
+    const HloInstruction* instr, const AutotuneConfig& config) {
+  return AutotuneCacheKey(config.GetModelStr(), *instr);
+}
+
+/*static*/ bool AutotunerUtil::IsInCache(const AutotuneCacheKey& key) {
+  return TryFindInCache(key) != nullptr;
+}
+
+/*static*/ bool AutotunerUtil::AddResult(const AutotuneCacheKey& key,
+                                         AutotuneResult result) {
+  absl::MutexLock lock(&autotune_cache_mu);
+  auto [_, inserted] = autotune_cache.emplace(key, std::move(result));
+  return inserted;
+}
+
 /*static*/ StatusOr<AutotuneResult> AutotunerUtil::Autotune(
     const HloInstruction* instr, const AutotuneConfig& config,
     const AutotuneNoCacheFn& autotune_fn) {
-  AutotuneCacheKey key(config.GetModelStr(), *instr);
+  AutotuneCacheKey key = GetKey(instr, config);
   if (AutotuneResult* res = TryFindInCache(key)) {
     return *res;
   }

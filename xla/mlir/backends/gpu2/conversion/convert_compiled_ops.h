@@ -16,7 +16,7 @@ limitations under the License.
 #ifndef XLA_MLIR_BACKENDS_GPU2_CONVERSION_CONVERT_COMPILED_OPS_H_
 #define XLA_MLIR_BACKENDS_GPU2_CONVERSION_CONVERT_COMPILED_OPS_H_
 
-#include "third_party/iree/llvm-external-projects/iree-dialects/include/iree-dialects/Dialect/Input/InputOps.h"
+#include "iree-dialects/Dialect/Input/InputOps.h"
 #include "mlir/IR/PatternMatch.h"  // from @llvm-project
 #include "mlir/Transforms/DialectConversion.h"  // from @llvm-project
 #include "xla/mlir/backends/gpu2/conversion/de_bufferization.h"
@@ -29,20 +29,11 @@ namespace gpu {
 class ThunkSequence;
 
 // Appends patterns to convert LMHLO operations compiled to kernel thunks to
-// IREEInput executable export and dispatch operations.
+// XLA executable object and dispatch operations.
 void populateCompiledOpsConversionPatterns(
     mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter,
     mlir::iree_compiler::IREE::Input::ExecutableSourceOp executable_source,
     ThunkSequence *thunk_sequence, DeBufferization &state);
-
-// Appends patterns to convert LMHLO operations compiled to kernel thunks to
-// XLA:GPU runtime API calls.
-void populateCompiledOpsConversionPatterns(mlir::RewritePatternSet &patterns,
-                                           mlir::TypeConverter &converter,
-                                           ThunkSequence *thunk_sequence,
-                                           DeBufferization &state,
-                                           XlaGpuApi &api,
-                                           XlaGpuGraphs &graphs);
 
 }  // namespace gpu
 }  // namespace xla
