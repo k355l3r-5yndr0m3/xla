@@ -13,6 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include "xla/python/xla.h"
+
 #include <cstdint>
 #include <exception>
 #include <functional>
@@ -58,10 +60,6 @@ limitations under the License.
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/tfrt_cpu_pjrt_client.h"
 #include "xla/python/pjrt_ifrt/pjrt_client.h"
-#ifdef XLA_PYTHON_ENABLE_TPU
-#include "xla/pjrt/tpu_client.h"
-#include "xla/stream_executor/tpu/tpu_initializer_framework_helper.h"  // NOLINT(unused-includes): required for tensorflow::tpu::LoadTpuLibraryAndInitializeTpuStructFns
-#endif  // XLA_PYTHON_ENABLE_TPU
 #include "xla/pjrt/pjrt_api.h"
 #include "xla/python/custom_call_sharding.h"
 #include "xla/python/dlpack.h"
@@ -139,7 +137,7 @@ bool IsSanitized() { return IsAsan() || IsMsan() || IsTsan(); }
 
 }  // namespace
 
-PYBIND11_MODULE(xla_extension, m) {
+static void Init(py::module_& m) {
   tsl::ImportNumpy();
 
   // Exceptions
@@ -313,7 +311,10 @@ PYBIND11_MODULE(xla_extension, m) {
           "Returns memory statistics for this device keyed by name. May not be "
           "implemented on all platforms, and different platforms may return "
           "different stats, or -1 for unavailable stats. 'bytes_in_use' is "
-          "usually available. Intended for diagnostic use.");
+          "usually available. Intended for diagnostic use.")
+      .def("get_stream_for_external_ready_events",
+           xla::ValueOrThrowWrapper(
+               &PjRtDevice::GetStreamForExternalReadyEvents));
   static PyMethodDef get_attr_method = {
       "__getattr__",
       +[](PyObject* self, PyObject* args) -> PyObject* {
@@ -398,17 +399,14 @@ PYBIND11_MODULE(xla_extension, m) {
       .def("local_device_count", &PyClient::addressable_device_count)
       .def("devices", &PyClient::Devices)
       .def("local_devices", &PyClient::LocalDevices)
+      .def("device_from_local_hardware_id",
+           xla::ValueOrThrowWrapper(&PyClient::DeviceFromLocalHardwareId))
       .def("live_buffers", &PyClient::LiveBuffers)
       .def("live_executables", &PyClient::LiveExecutables)
       .def("live_arrays", &PyClient::LiveArrays)
       .def("process_index", &PyClient::process_index)
       .def("host_id", &PyClient::process_index)
       .def("task_id", &PyClient::process_index)
-      .def("get_default_device_assignment",
-           xla::ValueOrThrowWrapper(&PyClient::GetDefaultDeviceAssignment))
-      // TODO(skye): delete after all callers can handle 2D output
-      .def("get_default_device_assignment",
-           xla::ValueOrThrowWrapper(&PyClient::GetDefaultDeviceAssignment1D))
       .def(
           "buffer_from_pyval",
           [](py::handle py_client, py::handle argument, py::handle py_device,
@@ -451,13 +449,7 @@ PYBIND11_MODULE(xla_extension, m) {
                &PyClient::MakePythonCallbackUsingHostSendAndRecv),
            py::arg("callable"), py::arg("operand_shapes"),
            py::arg("result_shapes"), py::arg("send_channel_ids"),
-           py::arg("recv_channel_ids"), py::arg("serializer") = py::none())
-      // Deprecated: please use `get_emit_python_callback_descriptor` instead.
-      .def("emit_python_callback",
-           xla::ValueOrThrowWrapper(&PyClient::EmitPythonCallback),
-           py::arg("callable"), py::arg("builder"), py::arg("operands"),
-           py::arg("result_shapes"), py::arg("operand_layouts") = std::nullopt,
-           py::arg("has_side_effects") = false);
+           py::arg("recv_channel_ids"), py::arg("serializer") = py::none());
 
   m.def(
       "get_tfrt_cpu_client",
@@ -621,15 +613,6 @@ PYBIND11_MODULE(xla_extension, m) {
          std::shared_ptr<DistributedRuntimeClient> distributed_client)
           -> std::shared_ptr<PyClient> {
         py::gil_scoped_release gil_release;
-#ifdef XLA_PYTHON_ENABLE_TPU
-#if !defined(PLATFORM_GOOGLE)
-        if (absl::AsciiStrToLower(platform_name) == "tpu") {
-          // TODO(b/261484192): handle device specific initialization.
-          xla::ThrowIfError(
-              tensorflow::tpu::LoadTpuLibraryAndInitializeTpuStructFns());
-        }
-#endif  // PLATFORM_GOOGLE
-#endif  // XLA_PYTHON_ENABLE_TPU
         PjRtClient::KeyValueGetCallback kv_get = nullptr;
         PjRtClient::KeyValuePutCallback kv_put = nullptr;
         if (distributed_client != nullptr) {
@@ -652,8 +635,6 @@ PYBIND11_MODULE(xla_extension, m) {
       py::arg("platform_name"),
       py::arg("options") = absl::flat_hash_map<std::string, PjRtValueType>(),
       py::arg("distributed_client") = nullptr);
-  // TODO(b/262050449): move out from `#ifdef XLA_PYTHON_ENABLE_TPU` when
-  // GetCApiTopology does not depend on TPU.
   m.def("get_default_c_api_topology",
         [](std::string platform_name, std::string topology_name,
            const absl::flat_hash_map<std::string, PjRtValueType>& options)
@@ -791,6 +772,13 @@ PYBIND11_MODULE(xla_extension, m) {
         xla::ValueOrThrowWrapper(BufferToDLPackManagedTensor),
         py::arg("buffer"), py::arg("take_ownership") = true,
         py::arg("stream") = py::none());
+  m.def("dlpack_managed_tensor_to_buffer",
+        [](const pybind11::capsule& tensor, ClientAndPtr<PjRtDevice> device,
+           std::optional<std::intptr_t> stream) {
+          return xla::ValueOrThrow(DLPackManagedTensorToBuffer(
+              tensor, device.get(), device.client(), stream));
+        });
+  // Legacy overload
   m.def(
       "dlpack_managed_tensor_to_buffer",
       [](const pybind11::capsule& tensor, std::shared_ptr<PyClient> cpu_client,
@@ -1040,9 +1028,22 @@ PYBIND11_MODULE(xla_extension, m) {
                              [](PjRtTopologyDescription& topology) {
                                return topology.platform_version();
                              })
-      .def("serialize", [](PjRtTopologyDescription& topology) {
-        return ValueOrThrow(topology.Serialize());
-      });
+      .def("serialize",
+           [](PjRtTopologyDescription& topology) -> py::bytes {
+             return py::bytes(ValueOrThrow(topology.Serialize()));
+           })
+      .def(
+          "__getattr__",
+          [](PjRtTopologyDescription& topology,
+             std::string name) -> py::object {
+            const auto& attrs = topology.Attributes();
+            auto it = attrs.find(name);
+            if (it != attrs.end()) {
+              return std::visit([](auto&& v) { return py::cast(v); },
+                                it->second);
+            }
+            throw py::attribute_error(absl::StrCat("Unknown attribute ", name));
+          });
 
   py::class_<PjRtExecutable, std::shared_ptr<PjRtExecutable>>(m, "Executable")
       .def("hlo_modules",
@@ -1085,5 +1086,25 @@ PYBIND11_MODULE(xla_extension, m) {
         return jax::CheckAndCanonicalizeMemoryKind(memory_kind, device_list);
       });
 }  // NOLINT(readability/fn_size)
+
+// This code in essence is a copy of PYBIND11_MODULE(). We can't just call
+// PYBIND11_MODULE because we want the entry point of the module to be in
+// the py_extension() translation unit but we don't want anything else to be
+// defined there. Inside Google, py_extension() translation units are linked
+// differently and they end up with a different instance of the
+// py::module_local() state, breaking that feature of pybind11.
+static py::module_::module_def xla_module_def;
+
+PyObject* InitializeXlaExtension() {
+  PYBIND11_CHECK_PYTHON_VERSION
+  PYBIND11_ENSURE_INTERNALS_READY
+  auto m = py::module_::create_extension_module("xla_extension", nullptr,
+                                                &xla_module_def);
+  try {
+    Init(m);
+    return m.ptr();
+  }
+  PYBIND11_CATCH_INIT_EXCEPTIONS
+}
 
 }  // namespace xla

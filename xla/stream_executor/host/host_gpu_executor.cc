@@ -43,11 +43,6 @@ HostStream* AsHostStream(Stream* stream) {
   return dynamic_cast<HostStream*>(stream->implementation());
 }
 
-HostExecutor::HostExecutor(const PluginConfig& plugin_config)
-    : plugin_config_(plugin_config) {}
-
-HostExecutor::~HostExecutor() {}
-
 tsl::Status HostExecutor::Init(int device_ordinal,
                                DeviceOptions device_options) {
   auto it =
@@ -280,18 +275,10 @@ HostExecutor::CreateDeviceDescription(int device_ordinal) {
   return builder.Build();
 }
 
-bool HostExecutor::SupportsBlas() const {
-  return PluginRegistry::Instance()
-      ->GetFactory<PluginRegistry::BlasFactory>(kHostPlatformId,
-                                                plugin_config_.blas())
-      .ok();
-}
-
 blas::BlasSupport* HostExecutor::CreateBlas() {
   PluginRegistry* registry = PluginRegistry::Instance();
   tsl::StatusOr<PluginRegistry::BlasFactory> status =
-      registry->GetFactory<PluginRegistry::BlasFactory>(kHostPlatformId,
-                                                        plugin_config_.blas());
+      registry->GetFactory<PluginRegistry::BlasFactory>(kHostPlatformId);
   if (!status.ok()) {
     LOG(ERROR) << "Unable to retrieve BLAS factory: "
                << status.status().message();
@@ -301,18 +288,10 @@ blas::BlasSupport* HostExecutor::CreateBlas() {
   return status.value()(this);
 }
 
-bool HostExecutor::SupportsFft() const {
-  return PluginRegistry::Instance()
-      ->GetFactory<PluginRegistry::FftFactory>(kHostPlatformId,
-                                               plugin_config_.fft())
-      .ok();
-}
-
 fft::FftSupport* HostExecutor::CreateFft() {
   PluginRegistry* registry = PluginRegistry::Instance();
   tsl::StatusOr<PluginRegistry::FftFactory> status =
-      registry->GetFactory<PluginRegistry::FftFactory>(kHostPlatformId,
-                                                       plugin_config_.fft());
+      registry->GetFactory<PluginRegistry::FftFactory>(kHostPlatformId);
   if (!status.ok()) {
     LOG(ERROR) << "Unable to retrieve FFT factory: "
                << status.status().message();

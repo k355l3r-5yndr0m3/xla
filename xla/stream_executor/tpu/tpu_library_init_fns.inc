@@ -37,6 +37,9 @@ tsl::Status SetTpuOpsStructFns(void* library_handle) {  // TENSORFLOW_STATUS_OK
   TFTPU_SET_FN(ops_api_fn, TpuCompile_XrtCompileAndBuild);
 
   TFTPU_SET_FN(ops_api_fn, TpuExecutable_LoadProgramAndEnqueueToStream);
+  TFTPU_SET_FN(ops_api_fn, TpuExecutable_CreateOpaqueTransferManager);
+  TFTPU_SET_FN(ops_api_fn, TpuExecutable_FreeOpaqueTransferManager);
+
   TFTPU_SET_FN(ops_api_fn, HardwareLayout_HostShapeToDeviceShape);
   TFTPU_SET_FN(ops_api_fn, HardwareLayout_ShapeSize);
   TFTPU_SET_FN(ops_api_fn, HardwareLayout_ShapeSizeCompact);
@@ -70,7 +73,6 @@ tsl::Status SetTpuOpsStructFns(void* library_handle) {  // TENSORFLOW_STATUS_OK
   TFTPU_SET_FN(ops_api_fn, TpuNodeContext_Create);
   TFTPU_SET_FN(ops_api_fn, TpuNodeContext_Free);
   TFTPU_SET_FN(ops_api_fn, TpuNodeContext_Initialize);
-  TFTPU_SET_FN(ops_api_fn, TpuNodeContext_StopChipHeartbeats);
   TFTPU_SET_FN(ops_api_fn, TpuNodeContext_CloseTpuHost);
   TFTPU_SET_FN(ops_api_fn, TpuNodeContext_CompactionSupported);
 
@@ -82,6 +84,7 @@ tsl::Status SetTpuOpsStructFns(void* library_handle) {  // TENSORFLOW_STATUS_OK
   TFTPU_SET_FN(ops_api_fn, TpuCompile_DestroyCompilationCacheKey);
   TFTPU_SET_FN(ops_api_fn, TpuCompile_CreateGuaranteedConstFingerprint);
   TFTPU_SET_FN(ops_api_fn, TpuUtil_GetTopologyPtr);
+  TFTPU_SET_FN(ops_api_fn, TpuUtil_GetXlaPadSizeFromTpuTopology);
 
   TFTPU_SET_FN(ops_api_fn, TfTpu_InitializeTpuModelServer);
 

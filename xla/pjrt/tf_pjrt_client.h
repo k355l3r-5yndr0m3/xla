@@ -45,6 +45,9 @@ class TfPjRtBuffer : public PjRtBuffer {
   StatusOr<Shape> logical_on_device_shape() override {
     return wrapped_->logical_on_device_shape();
   }
+  PjRtMemorySpace* memory_space() const override {
+    return wrapped_->memory_space();
+  }
   PjRtDevice* device() const override { return wrapped_->device(); }
   PjRtClient* client() const override;
   StatusOr<std::unique_ptr<ExternalReference>> AcquireExternalReference()
@@ -70,6 +73,10 @@ class TfPjRtBuffer : public PjRtBuffer {
   bool IsDeleted() override { return wrapped_->IsDeleted(); }
   StatusOr<std::unique_ptr<PjRtBuffer>> CopyToDevice(
       PjRtDevice* dst_device) override;
+  StatusOr<std::unique_ptr<PjRtBuffer>> CopyToMemorySpace(
+      PjRtMemorySpace* dst_memory_space) override {
+    return Unimplemented("CopyToMemorySpace not implemented");
+  }
   void CopyToRemoteDevice(
       PjRtFuture<StatusOr<std::string>> serialized_descriptor,
       RemoteSendCallback on_done) override {
@@ -255,6 +262,12 @@ class TfPjRtClient : public PjRtClient {
     return Unimplemented(
         "AsyncHostToDeviceTransferManager not supported for Tf.");
   }
+  StatusOr<std::unique_ptr<AsyncHostToDeviceTransferManager>>
+  CreateBuffersForAsyncHostToDevice(absl::Span<const Shape> shapes,
+                                    PjRtMemorySpace* memory_space) override {
+    return Unimplemented(
+        "AsyncHostToDeviceTransferManager not supported for Tf.");
+  }
   StatusOr<std::unique_ptr<PjRtBuffer>> BufferFromHostBuffer(
       const void* data, PrimitiveType type, absl::Span<int64_t const> dims,
       std::optional<absl::Span<int64_t const>> byte_strides,
@@ -281,9 +294,10 @@ class TfPjRtClient : public PjRtClient {
   }
   StatusOr<std::unique_ptr<PjRtBuffer>> CreateViewOfDeviceBuffer(
       void* device_ptr, const Shape& shape, PjRtDevice* device,
-      std::function<void()> on_delete_callback) override {
+      std::function<void()> on_delete_callback,
+      std::optional<std::intptr_t> stream) override {
     return WrapBuffer(wrapped_->CreateViewOfDeviceBuffer(
-        device_ptr, shape, device, on_delete_callback));
+        device_ptr, shape, device, on_delete_callback, stream));
   }
   StatusOr<std::uintptr_t> UnsafeBufferPointer(PjRtBuffer* buffer) override {
     return wrapped_->UnsafeBufferPointer(UnwrapBuffer(buffer));

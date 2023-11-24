@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/pjrt/pjrt_executable.h"
 
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -22,10 +23,25 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
+#include "absl/container/flat_hash_map.h"
+#include "absl/log/log.h"
+#include "absl/status/status.h"
 #include "absl/strings/numbers.h"
+#include "absl/strings/str_cat.h"
+#include "absl/strings/string_view.h"
 #include "xla/client/executable_build_options.h"
+#include "xla/pjrt/compile_options.pb.h"
 #include "xla/pjrt/execute_options.pb.h"
+#include "xla/pjrt/pjrt_common.h"
+#include "xla/service/hlo_cost_analysis.h"
+#include "xla/shape.h"
+#include "xla/shape_util.h"
+#include "xla/status.h"
+#include "xla/statusor.h"
 #include "xla/util.h"
+#include "xla/xla.pb.h"
+#include "xla/xla_data.pb.h"
+#include "tsl/platform/errors.h"
 #include "tsl/platform/statusor.h"
 
 namespace xla {
@@ -41,6 +57,10 @@ void SetOptionOverride(OptionOverrideProto& option, bool value) {
 
 void SetOptionOverride(OptionOverrideProto& option, int64_t value) {
   option.set_int_field(value);
+}
+
+void SetOptionOverride(OptionOverrideProto& option, double value) {
+  option.set_double_field(value);
 }
 
 }  // namespace
@@ -111,6 +131,12 @@ StatusOr<CompileOptions> CompileOptions::FromProto(
             {env_option_override.first,
              CompileOptions::OptionOverride(
                  env_option_override.second.int_field())});
+        break;
+      case OptionOverrideProto::kDoubleField:
+        output.env_option_overrides.push_back(
+            {env_option_override.first,
+             CompileOptions::OptionOverride(
+                 env_option_override.second.double_field())});
         break;
       case OptionOverrideProto::VALUE_NOT_SET:
         return InternalError("OptionOverrideProto value not set.");
@@ -244,6 +270,64 @@ StatusOr<std::vector<Shape>> PjRtExecutable::GetOutputShapes() const {
   return output_shapes;
 }
 
+StatusOr<std::vector<std::vector<PrimitiveType>>>
+PjRtExecutable::GetOutputElementTypes() const {
+  TF_ASSIGN_OR_RETURN(auto output_shapes, GetOutputShapes());
+  std::vector<std::vector<PrimitiveType>> output_element_types;
+  output_element_types.reserve(output_shapes.size());
+  for (int i = 0; i < output_shapes.size(); ++i) {
+    const Shape& output_shape = output_shapes[i];
+    std::vector<PrimitiveType> element_types;
+    if (output_shape.IsTuple()) {
+      const auto& tuple_shapes = output_shape.tuple_shapes();
+      element_types.reserve(tuple_shapes.size());
+      for (int j = 0; j < tuple_shapes.size(); ++j) {
+        if (tuple_shapes[j].IsTuple()) {
+          return Unimplemented(
+              "GetOutputElementTypes() doesn't support programs with "
+              "nested-tupled outputs.");
+        }
+        element_types.push_back(tuple_shapes[j].element_type());
+      }
+    } else {
+      element_types.reserve(1);
+      element_types.push_back(output_shape.element_type());
+    }
+    output_element_types.push_back(std::move(element_types));
+  }
+  return output_element_types;
+}
+
+StatusOr<std::vector<std::vector<DimensionVector>>>
+PjRtExecutable::GetOutputDimensions() const {
+  TF_ASSIGN_OR_RETURN(auto output_shapes, GetOutputShapes());
+  std::vector<std::vector<DimensionVector>> output_dimensions;
+  output_dimensions.reserve(output_shapes.size());
+  for (int i = 0; i < output_shapes.size(); ++i) {
+    const Shape& output_shape = output_shapes[i];
+    std::vector<DimensionVector> dimensions;
+    if (output_shape.IsTuple()) {
+      const auto& tuple_shapes = output_shape.tuple_shapes();
+      dimensions.reserve(tuple_shapes.size());
+      for (int j = 0; j < tuple_shapes.size(); ++j) {
+        if (tuple_shapes[j].IsTuple()) {
+          return Unimplemented(
+              "GetOutputDimensions() doesn't support programs with "
+              "nested-tupled outputs.");
+        }
+        dimensions.push_back(
+            ShapeUtil::CreateDimensionVectorFromShape(tuple_shapes[j]));
+      }
+    } else {
+      dimensions.reserve(1);
+      dimensions.push_back(
+          ShapeUtil::CreateDimensionVectorFromShape(output_shape));
+    }
+    output_dimensions.push_back(std::move(dimensions));
+  }
+  return output_dimensions;
+}
+
 StatusOr<absl::flat_hash_map<std::string, PjRtValueType>>
 PjRtExecutableUtil::RunHloCostAnalysis(const PjRtExecutable& executable,
                                        HloCostAnalysis* hlo_cost_analysis) {
@@ -312,6 +396,16 @@ Status CompileOptions::ApplyOption(const std::string& key,
                    tsl::protobuf::FieldDescriptor::TYPE_INT64 &&
                std::holds_alternative<int64_t>(value)) {
       reflection->SetInt64(&debug_options, xla_field, std::get<int64_t>(value));
+      return OkStatus();
+    } else if (xla_field->type() ==
+                   tsl::protobuf::FieldDescriptor::TYPE_FLOAT &&
+               std::holds_alternative<double>(value)) {
+      reflection->SetFloat(&debug_options, xla_field, std::get<double>(value));
+      return OkStatus();
+    } else if (xla_field->type() ==
+                   tsl::protobuf::FieldDescriptor::TYPE_DOUBLE &&
+               std::holds_alternative<double>(value)) {
+      reflection->SetDouble(&debug_options, xla_field, std::get<double>(value));
       return OkStatus();
     } else {
       return InvalidArgument(

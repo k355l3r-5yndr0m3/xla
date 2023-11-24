@@ -30,7 +30,7 @@ def clean_dep(target):
     """
 
     # A repo-relative label is resolved relative to the file in which the
-    # Label() call appears, i.e. @xla.
+    # Label() call appears, i.e. @org_tensorflow.
     return str(Label(target))
 
 def xla_py_proto_library(**kwargs):
@@ -128,6 +128,9 @@ def xla_cc_test(
 
 def auto_sharding_deps():
     return ["//xla/hlo/experimental/auto_sharding:auto_sharding_impl"]
+
+def auto_sharding_solver_deps():
+    return ["//xla/hlo/experimental/auto_sharding:auto_sharding_solver_impl"]
 
 register_extension_info(
     extension = xla_cc_test,

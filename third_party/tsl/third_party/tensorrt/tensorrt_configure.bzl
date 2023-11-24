@@ -47,6 +47,22 @@ _TF_TENSORRT_HEADERS_V8 = [
     "NvInferRuntimeCommon.h",
     "NvInferPluginUtils.h",
 ]
+_TF_TENSORRT_HEADERS_V8_6 = [
+    "NvInfer.h",
+    "NvInferConsistency.h",
+    "NvInferConsistencyImpl.h",
+    "NvInferImpl.h",
+    "NvInferLegacyDims.h",
+    "NvInferPlugin.h",
+    "NvInferPluginUtils.h",
+    "NvInferRuntime.h",
+    "NvInferRuntimeBase.h",
+    "NvInferRuntimeCommon.h",
+    "NvInferRuntimePlugin.h",
+    "NvInferSafeRuntime.h",
+    "NvInferVersion.h",
+    "NvUtils.h",
+]
 
 _DEFINE_TENSORRT_SONAME_MAJOR = "#define NV_TENSORRT_SONAME_MAJOR"
 _DEFINE_TENSORRT_SONAME_MINOR = "#define NV_TENSORRT_SONAME_MINOR"
@@ -73,6 +89,8 @@ def _at_least_version(actual_version, required_version):
     return actual >= required
 
 def _get_tensorrt_headers(tensorrt_version):
+    if _at_least_version(tensorrt_version, "8.6"):
+        return _TF_TENSORRT_HEADERS_V8_6
     if _at_least_version(tensorrt_version, "8"):
         return _TF_TENSORRT_HEADERS_V8
     if _at_least_version(tensorrt_version, "6"):
@@ -134,7 +152,7 @@ def _create_local_tensorrt_repository(repository_ctx):
     # function to be restarted with all previous state being lost. This
     # can easily lead to a O(n^2) runtime in the number of labels.
     # See https://github.com/tensorflow/tensorflow/commit/62bd3534525a036f07d9851b3199d68212904778
-    find_cuda_config_path = repository_ctx.path(Label("@xla//third_party/gpus:find_cuda_config.py.gz.base64"))
+    find_cuda_config_path = repository_ctx.path(Label("@tsl//third_party/gpus:find_cuda_config.py.gz.base64"))
     tpl_paths = {
         "build_defs.bzl": _tpl_path(repository_ctx, "build_defs.bzl"),
         "BUILD": _tpl_path(repository_ctx, "BUILD"),

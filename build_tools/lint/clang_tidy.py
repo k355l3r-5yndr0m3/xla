@@ -24,12 +24,16 @@ Example usage:
 
 This would run clang-tidy on all files that need to be compiled to build xla.
 """
+import argparse
+import collections
 import dataclasses
 import json
 import logging
 import subprocess
 import sys
-from typing import Any
+from typing import Any, Optional
+
+from xla.build_tools.lint import diff_parser
 
 JSONDict = dict[Any, Any]  # Approximates parsed JSON
 
@@ -72,38 +76,116 @@ class ClangTidyCommand:
 
     return cls(cc_file, filtered_args)
 
-  def to_invocation(self) -> list[str]:
-    return ["clang-tidy", self.file, "--", *self.arguments]
+  def to_invocation(self, extra_flags: Optional[list[str]] = None) -> list[str]:
+    if extra_flags is None:
+      extra_flags = []
+    return ["clang-tidy", self.file, *extra_flags, "--", *self.arguments]
 
 
 def extract_clang_tidy_commands(
     parsed_aquery_output: JSONDict,
 ) -> list[ClangTidyCommand]:
+  """Gathers clang-tidy commands to run from `bazel aquery` JSON output.
+
+  Arguments:
+    parsed_aquery_output: Parsed JSON representing the output of `bazel aquery
+      --output=jsonproto`.
+
+  Returns:
+    The list of ClangTidyCommands that should be executed.
+  """
   actions = parsed_aquery_output["actions"]
+
+  commands = []
+  for action in actions:
+    command = ClangTidyCommand.from_args_list(action["arguments"])
+    commands.append(command)
+  return commands
+
+
+def run_commands(
+    commands: list[ClangTidyCommand],
+    changed_lines: Optional[list[JSONDict]],
+) -> list[ClangTidyCommand]:
+  """Runs relevant clang-tidy commands.
+
+  Arguments:
+    commands: List of possibly relevant commands to run.
+    changed_lines: List of JSON describing changed_lines. If None, run all
+      commands.
+
+  Returns:
+    The list of failed commands.
+  """
+
+  failed = []
+  logging.info("Found %d clang-tidy commands to run...", len(commands))
+  for command in commands:
+    if changed_lines:
+      changed_lines_json = json.dumps(changed_lines)
+      extra_flags = [f"--line_filter={changed_lines_json}"]
+    else:
+      extra_flags = []
+    invocation = command.to_invocation(extra_flags=extra_flags)
+    logging.debug("clang-tidy command:")
+    sp = subprocess.run(invocation, check=False)
+    if sp.returncode != 0:
+      logging.error("clang-tidy invocation failed: %s", invocation)
+      failed.append(command)
+
+  return failed
+
+
+def _changed_lines_from_git_diff() -> list[JSONDict]:
+  """Get ranges of changed lines for clang-tidy.
+
+  clang-tidy expects to be given line ranges like
+    [{"name":"file1.cpp","lines":[[1,3],[5,7]]}, {"name":"file2.h"}]
+  So we construct those from the output of `git diff` here.
+
+  Returns:
+    The changed files and lines as above.
+  """
+
+  line_ranges = collections.defaultdict(list)
+  for hunk in diff_parser.parse_hunks(diff_parser.get_git_diff_stdout()):
+    line_ranges[hunk.file].append((hunk.start, hunk.start + hunk.length))
+
   return [
-      ClangTidyCommand.from_args_list(action["arguments"]) for action in actions
+      {"name": file, "lines": ranges} for file, ranges in line_ranges.items()
   ]
 
 
-def run_commands(commands: list[ClangTidyCommand]) -> None:
-  failed = []
-  for command in commands:
-    sp = subprocess.run(command.to_invocation(), check=False)
-    if sp.returncode != 0:
-      failed.append(command.file)
-
-  if failed:
-    raise RuntimeError(f"clang-tidy commands failed for these files: {failed}")
-
-
-def main():
+def main() -> int:
+  # Setup logging
   logging.basicConfig()
   logging.getLogger().setLevel(logging.INFO)
 
+  # Parse arguments
+  parser = argparse.ArgumentParser(description="Run clang-tidy on XLA.")
+  parser.add_argument(
+      "--changed_lines_only", action=argparse.BooleanOptionalAction
+  )
+  args = parser.parse_args(sys.argv[1:])
+
+  # Gather and run clang-tidy invocations
+  logging.info("Reading `bazel aquery` output from stdin...")
   parsed_aquery_output = json.loads(sys.stdin.read())
+
+  # Maybe make file_allowlist
+  changed_lines = None
+  if args.changed_lines_only:
+    changed_lines = _changed_lines_from_git_diff()
+    changed_files = [entry["name"] for entry in changed_lines]
+    logging.info("Found changed files: %s", changed_files)
+
+  # Need this symlink so that headers will be found
+  subprocess.run(["ln", "-s", "bazel-xla/external", "external"], check=True)
   commands = extract_clang_tidy_commands(parsed_aquery_output)
-  run_commands(commands)
+  failed_invocations = run_commands(commands, changed_lines)
+  subprocess.run("rm", "external", check=True)
+  return 1 if failed_invocations else 0
 
 
 if __name__ == "__main__":
-  main()
+  raise SystemExit(main())

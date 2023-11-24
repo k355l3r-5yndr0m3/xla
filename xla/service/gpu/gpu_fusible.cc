@@ -130,6 +130,9 @@ bool IsNestableVariadicReduction(const HloInstruction& instr) {
 }
 
 bool IsInputFusibleTranspose(const HloInstruction& instr) {
+  if (instr.opcode() == HloOpcode::kBitcast) {
+    return false;
+  }
   auto& hero = FindNonTrivialHero(instr);
   if (GetDescriptionForTiledTransposeEmitter(instr, hero).has_value()) {
     return true;
@@ -345,9 +348,10 @@ bool IsUniversallyLoopFusible(const HloInstruction& instr,
 
 bool IsLoopFusibleAsConsumer(const HloInstruction& instr,
                              const HloInstruction& hero) {
-  return instr.IsFusible() && (IsUniversallyLoopFusible(instr, hero) ||
-                               // Any reduction can be fused as a consumer.
-                               instr.opcode() == HloOpcode::kReduce);
+  return instr.IsFusible() && instr.opcode() != HloOpcode::kBitcast &&
+         (IsUniversallyLoopFusible(instr, hero) ||
+          // Any reduction can be fused as a consumer.
+          instr.opcode() == HloOpcode::kReduce);
 }
 
 bool IsLoopFusibleAsProducer(const HloInstruction& instr,
@@ -384,6 +388,12 @@ FusionDecision IsProducerConsumerFusible(const HloInstruction& producer,
   }
 
   if (IsInputFusibleReduction(producer)) {
+    if (!producer.GetModule()
+             ->config()
+             .debug_options()
+             .xla_gpu_enable_reduction_epilogue_fusion()) {
+      return "Reduction epilogue fusion is not enabled.";
+    }
     if (!AllSatisfy(consumer, [](const HloInstruction* hlo) {
           return IsIntermediate(hlo, /*allowed_operand_count=*/1);
         })) {
@@ -796,13 +806,13 @@ size_t GetOutputSizeOfFusible(const HloInstruction& instr) {
 }
 
 // Recursive helper for GetFusionRoots below.
-static void GetFusionRootsRec(HloInstruction* root,
-                              std::vector<HloInstruction*>& out) {
+static void GetFusionRootsRec(const HloInstruction* root,
+                              std::vector<const HloInstruction*>& out) {
   if (root->opcode() == HloOpcode::kGetTupleElement) {
-    return GetFusionRootsRec(root->mutable_operand(0), out);
+    return GetFusionRootsRec(root->operand(0), out);
   } else if (root->opcode() == HloOpcode::kTuple) {
     for (int i = 0; i < root->operand_count(); i++) {
-      GetFusionRootsRec(root->mutable_operand(i), out);
+      GetFusionRootsRec(root->operand(i), out);
     }
   } else {
     if (!out.empty() && out.back() == root) {
@@ -815,8 +825,9 @@ static void GetFusionRootsRec(HloInstruction* root,
   }
 }
 
-std::vector<HloInstruction*> GetFusionRoots(const HloComputation& computation) {
-  std::vector<HloInstruction*> out;
+std::vector<const HloInstruction*> GetFusionRoots(
+    const HloComputation& computation) {
+  std::vector<const HloInstruction*> out;
   GetFusionRootsRec(computation.root_instruction(), out);
   return out;
 }

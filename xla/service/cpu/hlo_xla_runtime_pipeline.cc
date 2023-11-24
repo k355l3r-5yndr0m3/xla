@@ -125,7 +125,7 @@ void AddSparsificationPasses(mlir::OpPassManager& pm, bool new_deallocator,
     pm.addNestedPass<mlir::gpu::GPUModuleOp>(mlir::createStripDebugInfoPass());
     pm.addNestedPass<mlir::gpu::GPUModuleOp>(mlir::createConvertSCFToCFPass());
     pm.addNestedPass<mlir::gpu::GPUModuleOp>(
-        mlir::createLowerGpuOpsToNVVMOpsPass());
+        mlir::createConvertGpuOpsToNVVMOps());
   }
 }
 
@@ -165,7 +165,8 @@ static Status CreateHloXlaPipeline(
     // invoke the needed passes to lower such CHLO operations to HLO after we
     // rewrite the custom calls back to such CHLO unary operations.
     pm.addNestedPass<mlir::func::FuncOp>(
-        mlir::mhlo::createLegalizeSparseChloToLinalgPass());
+        mlir::mhlo::createLegalizeSparseOperationsPass(
+            /*legalizeToCustomCalls=*/false));
     pm.addNestedPass<mlir::func::FuncOp>(
         mlir::mhlo::createChloLegalizeToHloPass());
     pm.addNestedPass<mlir::func::FuncOp>(
@@ -304,8 +305,10 @@ static Status CreateHloXlaPipeline(
     pm.addNestedPass<mlir::func::FuncOp>(
         mlir::bufferization::createBufferDeallocationPass());
     pm.addPass(mlir::createBufferizationToMemRefPass());
-    pm.addNestedPass<mlir::func::FuncOp>(
-        xla::cpu::createRemoveCopiesToOutParamsPass());
+    if (options.remove_copies_to_outparams) {
+      pm.addNestedPass<mlir::func::FuncOp>(
+          xla::cpu::createRemoveCopiesToOutParamsPass());
+    }
   }
   pm.addNestedPass<mlir::func::FuncOp>(mlir::thlo::createLegalizeSortPass());
 

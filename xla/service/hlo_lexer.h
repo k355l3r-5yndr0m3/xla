@@ -67,6 +67,9 @@ enum class TokKind {
   kw_replicated,
   kw_manual,
   kw_last_tile_dim_replicate,
+  kw_shard_as,
+  kw_shard_like,
+  kw_unknown,
   kw_inf,
 
   kNegInf,  // -inf

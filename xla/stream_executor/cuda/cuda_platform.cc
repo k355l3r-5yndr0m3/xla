@@ -142,16 +142,6 @@ CudaPlatform::DescriptionForDevice(int ordinal) const {
 tsl::StatusOr<StreamExecutor*> CudaPlatform::ExecutorForDevice(int ordinal) {
   StreamExecutorConfig config;
   config.ordinal = ordinal;
-  config.plugin_config = PluginConfig();
-  config.device_options = GetDeviceOptionsFromEnv();
-  return GetExecutor(config);
-}
-
-tsl::StatusOr<StreamExecutor*> CudaPlatform::ExecutorForDeviceWithPluginConfig(
-    int device_ordinal, const PluginConfig& plugin_config) {
-  StreamExecutorConfig config;
-  config.ordinal = device_ordinal;
-  config.plugin_config = plugin_config;
   config.device_options = GetDeviceOptionsFromEnv();
   return GetExecutor(config);
 }
@@ -171,8 +161,7 @@ tsl::StatusOr<StreamExecutor*> CudaPlatform::GetExecutor(
 tsl::StatusOr<std::unique_ptr<StreamExecutor>>
 CudaPlatform::GetUncachedExecutor(const StreamExecutorConfig& config) {
   auto executor = std::make_unique<StreamExecutor>(
-      this, std::make_unique<GpuExecutor>(config.plugin_config),
-      config.ordinal);
+      this, std::make_unique<GpuExecutor>(), config.ordinal);
   auto init_status = executor->Init(config.device_options);
   if (!init_status.ok()) {
     return tsl::Status(
@@ -183,15 +172,6 @@ CudaPlatform::GetUncachedExecutor(const StreamExecutorConfig& config) {
   }
 
   return std::move(executor);
-}
-
-void CudaPlatform::RegisterTraceListener(
-    std::unique_ptr<TraceListener> listener) {
-  LOG(FATAL) << "not yet implemented: register CUDA trace listener";
-}
-
-void CudaPlatform::UnregisterTraceListener(TraceListener* listener) {
-  LOG(FATAL) << "not yet implemented: unregister CUDA trace listener";
 }
 
 }  // namespace gpu

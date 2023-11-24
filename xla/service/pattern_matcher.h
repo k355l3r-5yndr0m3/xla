@@ -25,9 +25,14 @@ limitations under the License.
 #include <string>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
+#include "absl/container/inlined_vector.h"
+#include "absl/strings/str_cat.h"
+#include "absl/strings/str_join.h"
 #include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
+#include "absl/types/span.h"
 #include "absl/utility/utility.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -37,6 +42,7 @@ limitations under the License.
 #include "xla/literal_util.h"
 #include "xla/service/hlo_parser.h"
 #include "xla/shape_util.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 
@@ -85,6 +91,10 @@ namespace xla {
 //     - WithConvDnums(string or proto): checks convolution_dimension_numbers().
 //     - WithPredicate: Instruction matches an arbitrary function you pass.
 //       Function must have signature `bool(const HloInstruction*)`.
+//     - WithContractingDims: Dot instruction with specific LHS and RHS
+//       contracting dimensions.
+//     - WithReplicaGroups: Collective instruction's replica groups matches the
+//       given pattern.
 //
 //   Shape():
 //     - EqualTo
@@ -103,6 +113,8 @@ namespace xla {
 //
 //  Layout():
 //     - EqualTo
+//     - WithMinorToMajor: minor to major dimension ordering matches the given
+//       pattern
 //
 // Op(), Shape(), and Layout() may be passed an argument of type
 // HloInstruction**, Shape**, or Layout**, respectively, or const versions of
@@ -503,6 +515,30 @@ class LayoutPatternEqualImpl {
   const ::xla::Layout* layout_;
 };
 
+class LayoutPatternMinorToMajorImpl {
+ public:
+  explicit LayoutPatternMinorToMajorImpl(
+      absl::Span<const int64_t> minor_to_major)
+      : minor_to_major_(minor_to_major.begin(), minor_to_major.end()) {}
+
+  bool Match(const ::xla::Layout* layout, MatchOption option) const {
+    if (layout->minor_to_major() != minor_to_major_) {
+      EXPLAIN << "Layout does not have minor to major ["
+              << absl::StrJoin(minor_to_major_, ",") << "]";
+      return false;
+    }
+    return true;
+  }
+
+  void DescribeTo(std::ostream* os, int64_t indent = 0) const {
+    *os << "with minor to major [" << absl::StrJoin(minor_to_major_, ",")
+        << "]";
+  }
+
+ private:
+  absl::InlinedVector<int64_t, 8> minor_to_major_;
+};
+
 // A pattern that matches Layouts.
 template <typename LayoutType, typename Impl>
 class LayoutPattern {
@@ -549,6 +585,11 @@ class LayoutPattern {
   // The layout must outlive the returned pattern.
   constexpr auto EqualTo(const ::xla::Layout* layout) const {
     return AppendImpl(LayoutPatternEqualImpl(layout));
+  }
+
+  constexpr auto WithMinorToMajor(
+      absl::Span<const int64_t> minor_to_major) const {
+    return AppendImpl(LayoutPatternMinorToMajorImpl(minor_to_major));
   }
 
  private:
@@ -1106,6 +1147,10 @@ class ShapePattern {
   template <typename LayoutType, typename LayoutImpl>
   auto WithLayout(const LayoutPattern<LayoutType, LayoutImpl>& layout) const {
     return AppendImpl(ShapePatternLayoutImpl<LayoutType, LayoutImpl>(layout));
+  }
+
+  constexpr auto WithLayout(absl::Span<const int64_t> minor_to_major) const {
+    return WithLayout(Layout().WithMinorToMajor(minor_to_major));
   }
 
   constexpr auto WithLayoutEqualTo(const ::xla::Layout* layout) const {
@@ -1923,6 +1968,124 @@ class HloInstructionPredicateImpl {
   HloPredicate fn_;
 };
 
+class HloInstructionContractingDimsImpl {
+ public:
+  explicit HloInstructionContractingDimsImpl(
+      absl::Span<const int64_t> lhs_contracting_dims,
+      absl::Span<const int64_t> rhs_contracting_dims)
+      : lhs_contracting_dims_(lhs_contracting_dims.begin(),
+                              lhs_contracting_dims.end()),
+        rhs_contracting_dims_(rhs_contracting_dims.begin(),
+                              rhs_contracting_dims.end()) {}
+
+  bool Match(const ::xla::HloInstruction* inst, MatchOption option) const {
+    return MatchImpl(inst, option);
+  }
+
+  bool Match(::xla::HloInstruction* inst, MatchOption option) const {
+    return MatchImpl(inst, option);
+  }
+
+  void DescribeTo(std::ostream* os, int64_t indent = 0) const {
+    *os << "with lhs_contracting_dims {"
+        << absl::StrJoin(lhs_contracting_dims_, ",")
+        << "} and rhs_contracting_dims {"
+        << absl::StrJoin(rhs_contracting_dims_, ",") << "}";
+  }
+
+ private:
+  template <typename HloInstructionType>
+  bool MatchImpl(HloInstructionType* inst, MatchOption option) const {
+    if (inst->opcode() != HloOpcode::kDot) {
+      EXPLAIN << "HloInstruction is not dot so "
+                 "can't have dot_dimension_numbers";
+      return false;
+    }
+
+    const DotDimensionNumbers& dnums = inst->dot_dimension_numbers();
+    if (absl::MakeSpan(dnums.lhs_contracting_dimensions()) !=
+        lhs_contracting_dims_) {
+      EXPLAIN << "lhs_contracting_dimensions {"
+              << absl::StrJoin(dnums.lhs_contracting_dimensions(), ",")
+              << "} don't match expected {"
+              << absl::StrJoin(lhs_contracting_dims_, ",") << "}";
+      return false;
+    }
+
+    if (absl::MakeSpan(dnums.rhs_contracting_dimensions()) !=
+        rhs_contracting_dims_) {
+      EXPLAIN << "rhs_contracting_dimensions {"
+              << absl::StrJoin(dnums.rhs_contracting_dimensions(), ",")
+              << "} don't match expected {"
+              << absl::StrJoin(rhs_contracting_dims_, ",") << "}";
+      return false;
+    }
+    return true;
+  }
+
+  absl::InlinedVector<int64_t, 8> lhs_contracting_dims_;
+  absl::InlinedVector<int64_t, 8> rhs_contracting_dims_;
+};
+
+class HloInstructionReplicaGroupsImpl {
+ public:
+  explicit HloInstructionReplicaGroupsImpl(
+      std::vector<std::vector<int64_t>> replica_groups)
+      : replica_groups_(std::move(replica_groups)) {}
+
+  bool Match(const ::xla::HloInstruction* inst, MatchOption option) const {
+    return MatchImpl(inst, option);
+  }
+
+  bool Match(::xla::HloInstruction* inst, MatchOption option) const {
+    return MatchImpl(inst, option);
+  }
+
+  void DescribeTo(std::ostream* os, int64_t indent = 0) const {
+    std::vector<std::string> replica_group_strs;
+    replica_group_strs.reserve(replica_groups_.size());
+    for (const std::vector<int64_t>& replica_group : replica_groups_) {
+      replica_group_strs.push_back(
+          absl::StrCat("{", absl::StrJoin(replica_group, ","), "}"));
+    }
+    *os << "with replica_group {" << absl::StrJoin(replica_group_strs, ",")
+        << "}";
+  }
+
+ private:
+  template <typename HloInstructionType>
+  bool MatchImpl(HloInstructionType* inst, MatchOption option) const {
+    const HloCollectiveInstruction* collective =
+        DynCast<HloCollectiveInstruction>(inst);
+    if (!collective) {
+      EXPLAIN << "HloInstruction is not a collective";
+      return false;
+    }
+
+    if (absl::c_equal(collective->replica_groups(), replica_groups_,
+                      [](const ReplicaGroup& a, const std::vector<int64_t>& b) {
+                        return absl::c_equal(a.replica_ids(), b);
+                      })) {
+      return true;
+    }
+
+    std::ostringstream desc_stream;
+    DescribeTo(&desc_stream);
+
+    std::vector<std::string> replica_group_strs;
+    replica_group_strs.reserve(replica_groups_.size());
+    for (const ReplicaGroup& replica_group : collective->replica_groups()) {
+      replica_group_strs.push_back(absl::StrCat(
+          "{", absl::StrJoin(replica_group.replica_ids(), ","), "}"));
+    }
+    EXPLAIN << "replica_group {" << absl::StrJoin(replica_group_strs, ",")
+            << "} don't match expected " << desc_stream.str();
+    return false;
+  }
+
+  std::vector<std::vector<int64_t>> replica_groups_;
+};
+
 // Matches a constant scalar or effective scalar, optionally with a given value.
 template <typename ScalarTy>
 class HloConstantScalarImpl {
@@ -2113,6 +2276,13 @@ class HloInstructionPattern {
     return WithShape(Shape().WithElementType(ty).WithDims(dims));
   }
 
+  // Modifies the pattern to match only if the instruction's shape's element
+  // type, dims and minor to major dimension ordering match the given pattern.
+  constexpr auto WithShape(PrimitiveType ty, absl::Span<const int64_t> dims,
+                           absl::Span<const int64_t> minor_to_major) {
+    return WithShape(
+        Shape().WithElementType(ty).WithDims(dims).WithLayout(minor_to_major));
+  }
   // Make this a templated function to work around gcc 4.9.4 template infinite
   // recursion bug.
   template <typename Dummy = void>
@@ -2215,6 +2385,19 @@ class HloInstructionPattern {
     return AppendImpl(HloInstructionPredicateImpl(std::move(fn)));
   }
 
+  auto WithContractingDims(
+      absl::Span<const int64_t> lhs_contracting_dims,
+      absl::Span<const int64_t> rhs_contracting_dims) const {
+    return AppendImpl(HloInstructionContractingDimsImpl(lhs_contracting_dims,
+                                                        rhs_contracting_dims));
+  }
+
+  auto WithReplicaGroups(
+      std::vector<std::vector<int64_t>> replica_groups) const {
+    return AppendImpl(
+        HloInstructionReplicaGroupsImpl(std::move(replica_groups)));
+  }
+
   void DescribeTo(std::ostream* os, int64_t indent = 0) const {
     impl_.DescribeTo(os, indent);
   }
@@ -2309,8 +2492,6 @@ XLA_UNOP_PATTERN(Ceil)
 XLA_UNOP_PATTERN(Convert)
 XLA_UNOP_PATTERN(Copy)
 XLA_UNOP_PATTERN(Cos)
-XLA_UNOP_PATTERN(AllGather)
-XLA_UNOP_PATTERN(AllReduce)
 XLA_UNOP_PATTERN(AllReduceStart)
 XLA_UNOP_PATTERN(AllReduceDone)
 XLA_UNOP_PATTERN(AllToAll)
@@ -2332,7 +2513,6 @@ XLA_UNOP_PATTERN(Real)
 XLA_UNOP_PATTERN(Recv)
 XLA_UNOP_PATTERN(RecvDone)
 XLA_UNOP_PATTERN(ReducePrecision)
-XLA_UNOP_PATTERN(ReduceScatter)
 XLA_UNOP_PATTERN(Reshape)
 XLA_UNOP_PATTERN(Reverse)
 XLA_UNOP_PATTERN(Rsqrt)
@@ -2469,11 +2649,18 @@ inline auto WithOperands(Matcher&& m, int64_t operand_num, FirstArg&& first_arg,
                                     .WithNumOperands(sizeof...(Args)),        \
                                 /*operand_num=*/0,                            \
                                 std::forward<Args>(args)...);                 \
+  }                                                                           \
+                                                                              \
+  template <typename HloInstructionType>                                      \
+  inline auto NAME(HloInstructionType** matched_inst) {                       \
+    return Op(matched_inst).WithOpcode(HloOpcode::k##NAME);                   \
   }
 
 // We could implement all ops as "variadic" ops, but it would make the
 // already-bad compile errors even worse.
 XLA_VARIADIC_OP_PATTERN(AfterAll);
+XLA_VARIADIC_OP_PATTERN(AllGather)
+XLA_VARIADIC_OP_PATTERN(AllReduce)
 XLA_VARIADIC_OP_PATTERN(Concatenate);
 XLA_VARIADIC_OP_PATTERN(Conditional);
 XLA_VARIADIC_OP_PATTERN(DynamicSlice)
@@ -2481,6 +2668,7 @@ XLA_VARIADIC_OP_PATTERN(DynamicUpdateSlice)
 XLA_VARIADIC_OP_PATTERN(Fusion);
 XLA_VARIADIC_OP_PATTERN(Map)
 XLA_VARIADIC_OP_PATTERN(Reduce);
+XLA_VARIADIC_OP_PATTERN(ReduceScatter)
 XLA_VARIADIC_OP_PATTERN(ReduceWindow)
 XLA_VARIADIC_OP_PATTERN(Scatter);
 XLA_VARIADIC_OP_PATTERN(Sort);

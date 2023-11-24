@@ -43,8 +43,7 @@ namespace host {
 // See stream_executor.h for description of the below operations.
 class HostExecutor : public internal::StreamExecutorInterface {
  public:
-  explicit HostExecutor(const PluginConfig& plugin_config);
-  ~HostExecutor() override;
+  HostExecutor() = default;
 
   // The stack size used for host streams can be set via
   // device_options.non_portable_tags["host_stack_size"].
@@ -118,8 +117,6 @@ class HostExecutor : public internal::StreamExecutorInterface {
 
   tsl::Status BlockHostUntilDone(Stream* stream) override;
 
-  int PlatformDeviceCount() override { return 1; }
-
   bool DeviceMemoryUsage(int64_t* free, int64_t* total) const override;
 
   tsl::StatusOr<std::unique_ptr<DeviceDescription>> CreateDeviceDescription()
@@ -138,13 +135,10 @@ class HostExecutor : public internal::StreamExecutorInterface {
     return true;
   }
 
-  bool SupportsBlas() const override;
   blas::BlasSupport* CreateBlas() override;
 
-  bool SupportsDnn() const override { return false; }
   dnn::DnnSupport* CreateDnn() override { return nullptr; }
 
-  bool SupportsFft() const override;
   fft::FftSupport* CreateFft() override;
 
   std::unique_ptr<internal::EventInterface> CreateEventImplementation()
@@ -160,7 +154,6 @@ class HostExecutor : public internal::StreamExecutorInterface {
   void* GpuContextHack() override { return nullptr; }
 
  private:
-  const PluginConfig plugin_config_;
   // Size of thread stacks for streams in bytes. '0' means "the default size".
   size_t thread_stack_size_in_bytes_ = 0;
 };

@@ -50,6 +50,7 @@ limitations under the License.
 #include "xla/service/memory_space_assignment_utils.h"
 #include "xla/service/tuple_util.h"
 #include "xla/shape.h"
+#include "xla/shape_util.h"
 #include "xla/status.h"
 #include "xla/util.h"
 #include "tsl/platform/casts.h"
@@ -3810,7 +3811,9 @@ HeapSimulator::Result<HloValue> AlternateMemoryBestFitHeap::Finish() {
             options_.repacker->Repack(absl::MakeSpan(repack_allocation_blocks));
         CHECK_EQ(repack_status.status(), OkStatus());
         VLOG(2) << "Repack complete. Modified = " << *repack_status;
-        if (*repack_status) {
+        // For debug and testing purpose, also update allocations if
+        // repack_after_every_allocation is on.
+        if (*repack_status || options_.repack_after_every_allocation) {
           ImportRepackedAllocations();
           --retry_number;
         }
@@ -3843,6 +3846,17 @@ HeapSimulator::Result<HloValue> AlternateMemoryBestFitHeap::Finish() {
         break;
       }
     }
+  }
+  if (options_.repack_after_every_allocation) {
+    CHECK_NE(options_.repacker, nullptr);
+    std::vector<MemorySpaceAssignmentRepacker::AllocationBlock*>
+        repack_allocation_blocks;
+    ExportAllocationsForRepacking(repack_allocation_blocks);
+    VLOG(2) << "Final Repacking.";
+    auto repack_status =
+        options_.repacker->Repack(absl::MakeSpan(repack_allocation_blocks));
+    CHECK_EQ(repack_status.status(), OkStatus());
+    VLOG(2) << "Final Repack complete. Modified = " << *repack_status;
   }
 
   if (options_.dump_fn != nullptr || VLOG_IS_ON(3)) {
@@ -5049,8 +5063,9 @@ void AlternateMemoryBestFitHeap::AllocateReservedScopedAllocations() {
   std::vector<MemorySpaceAssignmentRepacker::AllocationBlock*> colocations;
   for (int i = 0; i < instruction_sequence.size(); ++i) {
     const HloInstruction* instruction = instruction_sequence[i];
-    int64_t reserved_scoped_memory =
-        options_.reserved_scoped_memory_fn(instruction);
+    int64_t reserved_scoped_memory = options_.reserved_scoped_memory_fn(
+        instruction, /*operands_in_alternate_memory=*/{},
+        /*outputs_in_alternate_memory=*/{});
     if (reserved_scoped_memory != 0) {
       VLOG(1) << "Allocate reserved scoped memory at " << i << " ("
               << instruction->name() << "): " << reserved_scoped_memory;
@@ -5371,8 +5386,36 @@ AlternateMemoryBestFitHeap::GetRepeatedInstructionList(
   return &repeated_insts_it->second;
 }
 
+void AlternateMemoryBestFitHeap::UpdateReservedScopedAllocationSize() {
+  // Check all instructions, if their operands/outputs have been placed in
+  // alternate memory, update their scoped allocation size.
+  VLOG(2) << "Update scoped allocation size before repacking.";
+  const auto& instruction_sequence =
+      hlo_live_range_.flattened_instruction_sequence().instructions();
+  absl::flat_hash_map<int64_t, int64_t> reserved_scoped_memory_map;
+  for (int i = 0; i < instruction_sequence.size(); ++i) {
+    const HloInstruction* instruction = instruction_sequence[i];
+    reserved_scoped_memory_map[i] = options_.reserved_scoped_memory_fn(
+        instruction, operands_in_alternate_memory_map_[instruction],
+        outputs_in_alternate_memory_map_[instruction]);
+  }
+  // Update scoped allocation sizes.
+  for (RepackAllocationBlock& allocation_block : repack_allocation_blocks_) {
+    MemorySpaceAssignment::Allocation* allocation = allocation_block.allocation;
+    if (allocation->is_scoped_allocation()) {
+      allocation_block.size =
+          reserved_scoped_memory_map[allocation->start_time()];
+      allocation->mutable_chunk()->size =
+          reserved_scoped_memory_map[allocation->start_time()];
+    }
+  }
+}
+
 void AlternateMemoryBestFitHeap::ExportAllocationsForRepacking(
     std::vector<MemorySpaceAssignmentRepacker::AllocationBlock*>& allocations) {
+  if (options_.reduce_scoped_memory_limit) {
+    UpdateReservedScopedAllocationSize();
+  }
   for (RepackAllocationBlock& allocation_block : repack_allocation_blocks_) {
     allocations.push_back(&allocation_block);
   }
@@ -5463,6 +5506,18 @@ void AlternateMemoryBestFitHeap::FinalizeAllocations(
       colocation_map;
   for (AllocationValue& allocation_value : allocation_values) {
     for (auto& allocation : *allocation_value.mutable_allocation_sequence()) {
+      if ((allocation->memory_space() == MemorySpace::kAlternate) &&
+          (!allocation->is_scoped_allocation())) {
+        for (const HloUse& use : allocation->uses()) {
+          operands_in_alternate_memory_map_[use.instruction].insert(
+              std::make_pair(use.operand_number, use.operand_index));
+        }
+        if (!allocation->is_copy_like_allocation()) {
+          outputs_in_alternate_memory_map_[allocation->defining_position()
+                                               .instruction]
+              .insert(allocation->defining_position().index);
+        }
+      }
       allocations_->push_back(std::move(allocation));
       MemorySpaceAssignment::Allocation* inserted_allocation =
           allocations_->back().get();
@@ -5732,7 +5787,7 @@ AlternateMemoryBestFitHeap::Result AlternateMemoryBestFitHeap::AllocateSegment(
           prefetch_time =
               static_cast<const MemorySpaceAssignment::SlicedCopyAllocation*>(
                   allocation)
-                  ->sorted_slice_details()
+                  ->slice_details_sorted_by_start_time()
                   .front()
                   .copy_start_after_time;
         } else {
@@ -6413,7 +6468,7 @@ void AlternateMemoryBestFitHeap::SetupPrefetchWorkingIntervalsAndSliceProposal(
          *context.slice_proposal_collection) {
       sizes.push_back(single_slice_proposal.slice_size);
     }
-    context.sliced_solution_intervals.sliced->Slice(absl::Span<int64_t>(sizes));
+    context.sliced_solution_intervals.sliced->Slice(sizes);
   }
   context.unsliced_solution_intervals.sliced =
       std::make_unique<SlicedBufferInterval>(
@@ -7632,7 +7687,7 @@ HloPosition MemorySpaceAssignment::SlicedCopyAllocation::defining_position()
 
 int64_t MemorySpaceAssignment::SlicedCopyAllocation::earliest_available_time()
     const {
-  return sorted_slice_details().back().copy_done_before_time;
+  return slice_details_sorted_by_start_time().back().copy_done_before_time;
 }
 
 void MemorySpaceAssignment::SlicedCopyAllocation::ReplaceOffset(
@@ -7645,12 +7700,14 @@ void MemorySpaceAssignment::SlicedCopyAllocation::ReplaceOffset(
 }
 
 const std::vector<MemorySpaceAssignment::SlicedCopyAllocation::SliceDetail>&
-MemorySpaceAssignment::SlicedCopyAllocation::sorted_slice_details() const {
+MemorySpaceAssignment::SlicedCopyAllocation::
+    slice_details_sorted_by_start_time() const {
   return slice_details_sorted_by_start_time_;
 }
 
 std::vector<MemorySpaceAssignment::SlicedCopyAllocation::SliceDetail>&
-MemorySpaceAssignment::SlicedCopyAllocation::mutable_sorted_slice_details() {
+MemorySpaceAssignment::SlicedCopyAllocation::
+    mutable_slice_details_sorted_by_start_time() {
   return slice_details_sorted_by_start_time_;
 }
 
@@ -7673,14 +7730,14 @@ std::string MemorySpaceAssignment::SlicedCopyAllocation::ToString() const {
   if (memory_space_ == MemorySpace::kAlternate) {
     memory_space_str = absl::StrCat("alt (off: ", chunk_->offset, ")");
   }
-  return absl::StrCat("Sliced Copy Allocation in ", memory_space_str,
-                      ", start_time:", start_time(), ", end_time:", end_time(),
-                      ", first_slice_copy_start_after_time: ",
-                      sorted_slice_details().front().copy_start_after_time,
-                      ", last_slice_copy_done_before_time: ",
-                      sorted_slice_details().back().copy_done_before_time,
-                      ", uses: ", UsesToString(uses()), ", from ",
-                      prev_allocation_.ToString());
+  return absl::StrCat(
+      "Sliced Copy Allocation in ", memory_space_str,
+      ", start_time:", start_time(), ", end_time:", end_time(),
+      ", first_slice_copy_start_after_time: ",
+      slice_details_sorted_by_start_time().front().copy_start_after_time,
+      ", last_slice_copy_done_before_time: ",
+      slice_details_sorted_by_start_time().back().copy_done_before_time,
+      ", uses: ", UsesToString(uses()), ", from ", prev_allocation_.ToString());
 }
 
 Status MemorySpaceAssignment::SlicedCopyAllocation::CreateBitcastConcat(
@@ -7847,7 +7904,7 @@ Status MemorySpaceAssignment::Process(const HloLiveRange& hlo_live_range) {
         const SlicedCopyAllocation& sliced_copy_allocation =
             *static_cast<const SlicedCopyAllocation*>(allocation.get());
         for (const SlicedCopyAllocation::SliceDetail& details :
-             sliced_copy_allocation.sorted_slice_details()) {
+             sliced_copy_allocation.slice_details_sorted_by_start_time()) {
           alternate_memory_assignments_.push_back(
               {{details.copy_done, {}}, details.slice_decision.chunk});
           alternate_memory_size_ = std::max(
@@ -8170,7 +8227,8 @@ class AsyncCopyStepForSlice : public AsyncCopyStep {
   std::optional<StartPhase> start_phase() const override {
     const MemorySpaceAssignment::SlicedCopyAllocation::SliceDetail&
         slice_details =
-            sliced_copy_allocation_->sorted_slice_details()[slice_index_];
+            sliced_copy_allocation_
+                ->slice_details_sorted_by_start_time()[slice_index_];
     StartPhase phase{slice_details.copy_start_after_time,
                      slice_details.copy_start};
 
@@ -8178,14 +8236,16 @@ class AsyncCopyStepForSlice : public AsyncCopyStep {
   }
 
   void set_start_phase_schedule_after_time(int64_t schedule_after) override {
-    sliced_copy_allocation_->mutable_sorted_slice_details()[slice_index_]
+    sliced_copy_allocation_
+        ->mutable_slice_details_sorted_by_start_time()[slice_index_]
         .copy_start_after_time = schedule_after;
   }
 
   DonePhase done_phase() const override {
     const MemorySpaceAssignment::SlicedCopyAllocation::SliceDetail&
         slice_details =
-            sliced_copy_allocation_->sorted_slice_details()[slice_index_];
+            sliced_copy_allocation_
+                ->slice_details_sorted_by_start_time()[slice_index_];
     DonePhase phase{slice_details.copy_done_before_time,
                     slice_details.copy_done};
 
@@ -8245,8 +8305,9 @@ void MemorySpaceAssignment::ScheduleAsynchronousCopies() {
       } else if (allocation->is_sliced_copy_allocation()) {
         auto sliced_copy_allocation =
             static_cast<SlicedCopyAllocation*>(allocation.get());
-        for (int i = 0;
-             i < sliced_copy_allocation->mutable_sorted_slice_details().size();
+        for (int i = 0; i < sliced_copy_allocation
+                                ->mutable_slice_details_sorted_by_start_time()
+                                .size();
              ++i) {
           async_copy_steps.push_back(std::make_unique<AsyncCopyStepForSlice>(
               sliced_copy_allocation, i));
