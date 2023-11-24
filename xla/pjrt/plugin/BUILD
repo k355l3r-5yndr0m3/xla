@@ -38,6 +38,7 @@ package(
 )
 
 
+# TODO: Implement gpu and tpu
 xla_cc_binary(
     name = "PJRTPlugin",
     linkshared = True,

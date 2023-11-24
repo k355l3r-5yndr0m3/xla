@@ -2021,7 +2021,7 @@ typedef struct {
   _PJRT_API_STRUCT_FIELD(PJRT_Executable_OutputDimensions);
 } PJRT_Api;
 
-const size_t PJRT_Api_STRUCT_SIZE =
+static const size_t PJRT_Api_STRUCT_SIZE =
     PJRT_STRUCT_SIZE(PJRT_Api, PJRT_Executable_OutputDimensions);
 
 #undef _PJRT_API_STRUCT_FIELD
